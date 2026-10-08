@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 import streamlit as st
-from providers.swiss import run_swiss
+from providers.swiss_http import run_swiss
 from providers.swiss_cached import collect_existing_swiss, is_reference_batch
 from providers.targetnet import run_targetnet
 from providers.pharmmapper import collect_pharmmapper, JOB_IDS
