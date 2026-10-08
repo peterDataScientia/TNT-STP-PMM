@@ -4,6 +4,7 @@ import io
 from pathlib import Path
 import streamlit as st
 from providers.swiss import run_swiss
+from providers.swiss_cached import collect_existing_swiss, is_reference_batch
 from providers.pharmmapper import collect_pharmmapper, JOB_IDS
 
 st.set_page_config(page_title="TNT-STP-PMM", page_icon="🧬", layout="wide")
@@ -60,26 +61,44 @@ if uploaded is None:
 swiss_tab, pharm_tab, target_tab = st.tabs(["SwissTargetPrediction", "PharmMapper", "TargetNet"])
 with swiss_tab:
     st.subheader("SwissTargetPrediction")
-    st.caption("Attempts actual target prediction; external website compatibility is not guaranteed.")
-    if records and st.button(f"Run SwissTargetPrediction for {len(records)} compounds", type="primary"):
+    reference = bool(records) and is_reference_batch(records)
+    if reference:
+        st.success("17 completed A0–A16 predictions already exist: reuse their results instead of submitting them again.")
+        if st.button("Get A0–A16 results (FAST)", type="primary"):
+            st.session_state.pop("swiss_result", None)
+            with st.spinner("Retrieving existing result tables in parallel; no new submissions"):
+                try:
+                    archive, count, errors = collect_existing_swiss(records)
+                    st.session_state["swiss_result"] = (archive, count, errors, "existing")
+                except Exception as exc:
+                    st.error(f"Existing result retrieval failed: {exc}")
+        with st.expander("Generate NEW SwissTargetPrediction jobs instead (slower)"):
+            st.warning("The original 17 predictions are already available. New submissions can take substantially longer.")
+            fresh = st.button("Submit 17 new predictions", key="swiss_new")
+    else:
+        st.info("For new compounds, SwissTargetPrediction must generate predictions on its server.")
+        fresh = bool(records) and st.button("Submit new predictions", type="primary", key="swiss_new")
+    if fresh and records:
         st.session_state.pop("swiss_result", None)
         bar = st.progress(0)
         status = st.empty()
         def update(done, total, cid, state):
             bar.progress(done / total)
-            status.info(f"{done}/{total} — {cid}: {state}")
+            status.caption(f"{done}/{total} — {cid}: {state}")
         try:
             archive, count, errors = run_swiss(records, update)
-            st.session_state["swiss_result"] = (archive, count, errors)
+            st.session_state["swiss_result"] = (archive, count, errors, "new")
         except Exception as exc:
-            st.error(f"Prediction request failed: {exc}")
+            st.error(f"Prediction failed: {exc}")
     if "swiss_result" in st.session_state:
-        archive, count, errors = st.session_state["swiss_result"]
-        st.write(f"Results collected: {count}; failures: {len(errors)}")
+        archive, count, errors, origin = st.session_state["swiss_result"]
+        st.write(f"Collected results: {count}; failed: {len(errors)}")
+        st.caption("Reused prior confirmed prediction jobs." if origin == "existing" else "New prediction run.")
         if errors:
             st.error(errors)
         st.download_button("Download SwissTargetPrediction ZIP", archive,
-                           file_name="SwissTargetPrediction_results.zip", mime="application/zip")
+                           file_name="SwissTargetPrediction_A0_A16_results.zip" if origin == "existing" else "SwissTargetPrediction_new_results.zip",
+                           mime="application/zip")
 with pharm_tab:
     st.subheader("PharmMapper | Existing A0–A16 jobs")
     st.caption("Downloads existing job results only. Does not submit new jobs.")
