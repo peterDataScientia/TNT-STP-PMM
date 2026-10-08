@@ -303,6 +303,11 @@ with pharm_tab:
                 if details:
                     with st.expander(f"{cid} provider response diagnostics"):
                         st.json(details)
+            if st.button("Clear REJECTED entries after fixing the server error"):
+                for cid in rejected:
+                    jobs.pop(cid, None)
+                st.session_state["pmm_jobs"] = dict(jobs)
+                st.info("Rejected records cleared. Use Submit only after fixing the reported cause.")
         unknown = [cid for cid, row in jobs.items() if row.get("status") == "SUBMISSION_UNKNOWN"]
         if unknown:
             st.error("Job ID not confirmed for " + ", ".join(unknown) +
