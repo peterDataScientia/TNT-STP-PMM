@@ -150,8 +150,26 @@ with target_tab:
     show_result("TargetNet", "targetnet_output", "TargetNet_predictions.zip")
 
 with pharm_tab:
-    st.subheader("PharmMapper — New job submission and collection")
-    st.caption("Generates 3D SDF V2000 from uploaded SMILES. PharmMapper permits at most 10 active jobs; unfinished jobs require later collection.")
+    st.subheader("PharmMapper — Human target prediction")
+    if reference:
+        st.success("All 17 original A0–A16 PharmMapper job IDs are already confirmed.")
+        if st.button("Get 17 completed PharmMapper results (FAST)", type="primary"):
+            try:
+                archive, count, errors = get_existing_pharmmapper()
+                st.session_state["pmm_historical"] = (archive, count, errors)
+            except Exception as exc:
+                st.error(f"PharmMapper retrieval failed: {exc}")
+        show_result("Historical PharmMapper", "pmm_historical",
+                    "PharmMapper_A0_A16_historical.zip")
+        st.divider()
+        allow_submit = st.checkbox(
+            "Submit NEW PharmMapper jobs for the same A0–A16 compounds",
+            value=False,
+            help="These original molecules already have completed jobs. Enabling this will make new submissions.",
+        )
+    else:
+        allow_submit = True
+    st.caption("For new jobs: prepare 3D SDF V2000, submit at most 10 active jobs, save job IDs and collect results later.")
     email = st.text_input("Required PharmMapper notification email", value="",
                           placeholder="you@example.com", key="pmm_email")
     st.caption("PharmMapper requires a valid email address before accepting a new job; it is not included in result downloads.")
@@ -187,11 +205,14 @@ with pharm_tab:
 
     active = sum(j.get("status") in ("SUBMITTED", "SUBMISSION_UNKNOWN") for j in jobs.values())
     pending = sum(r["compound_id"] not in jobs or jobs[r["compound_id"]].get("status") == "FAILED" for r in records)
-    st.write(f"Queued: {pending} · Active/unknown: {active}/{LIMIT} · Recorded: {len(jobs)}")
+    if allow_submit:
+        st.write(f"New-job queue: {pending} · Active/unknown: {active}/{LIMIT} · Recorded: {len(jobs)}")
+    else:
+        st.caption("New submissions disabled. Use FAST collection above for the existing 17 results.")
     c1, c2 = st.columns(2)
     with c1:
         if records and st.button("Submit pending PharmMapper jobs", type="primary",
-                                 disabled=(not email.strip()) or pending == 0 or active >= LIMIT):
+                                 disabled=(not allow_submit) or (not email.strip()) or pending == 0 or active >= LIMIT):
             try:
                 jobs = submit_pending(records, email, jobs, progress_view(),
                                       on_checkpoint=lambda snapshot: st.session_state.__setitem__("pmm_jobs", snapshot))
@@ -224,17 +245,6 @@ with pharm_tab:
                      ". Check PharmMapper email/job history before any resubmission.")
     show_result("PharmMapper", "pmm_output", "PharmMapper_collected_jobs.zip")
 
-    if reference:
-        st.divider()
-        st.subheader("Previous A0–A16 PharmMapper predictions — FAST")
-        if st.button("Get 17 completed PharmMapper results (FAST)", type="primary"):
-            try:
-                archive, count, errors = get_existing_pharmmapper()
-                st.session_state["pmm_historical"] = (archive, count, errors)
-            except Exception as exc:
-                st.error(f"PharmMapper retrieval failed: {exc}")
-        show_result("Historical PharmMapper", "pmm_historical",
-                    "PharmMapper_A0_A16_historical.zip")
 
 st.divider()
 st.caption("Only server-confirmed predictions are marked COLLECTED. Streamlit Community Cloud is not a durable background worker: download PharmMapper checkpoints to resume after a server restart.")
