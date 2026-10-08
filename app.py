@@ -10,7 +10,7 @@ st.set_page_config(page_title="TNT-STP-PMM", page_icon="🧬", layout="wide")
 st.title("TNT–STP–PMM")
 st.caption("TargetNet · SwissTargetPrediction · PharmMapper")
 
-EXAMPLE = Path(__file__).resolve().parent / "examples" / "A0_A16_compounds.csv"
+EXAMPLE = Path(__file__).resolve().parent / "examples" / "compounds.csv"
 
 def read_compounds(raw):
     reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
@@ -29,8 +29,8 @@ st.subheader("Compounds | EMNE and analogues A0–A16")
 st.write("The 17 original research compounds are loaded by default. Upload a CSV to replace them.")
 col1, col2 = st.columns(2)
 with col1:
-    st.download_button("Download EMNE A0–A16 CSV", EXAMPLE.read_bytes(),
-                       file_name="EMNE_A0_A16_compounds.csv", mime="text/csv")
+    st.download_button("Download Example CSV (EMNE A0–A16)", EXAMPLE.read_bytes(),
+                       file_name="example_compounds_A0_A16.csv", mime="text/csv")
 with col2:
     if st.button("Load original A0–A16 compounds"):
         st.session_state.pop("swiss_result", None)
