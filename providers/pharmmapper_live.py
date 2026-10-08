@@ -432,7 +432,7 @@ class SubmissionRejected(RuntimeError):
         self.diagnostics = diagnostics or {}
 
 
-def _submit_one(page, record, email):
+def _submit_one(page, record, email, on_submit_armed=None):
     cid = record["compound_id"]
     data = sdf_from_smiles(record["smiles"], cid)
     last = None
@@ -492,6 +492,10 @@ def _submit_one(page, record, email):
         captured_responses.append(response), network_urls.append(response.url)))
     page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
 
+    # Persist in-flight state BEFORE submitting. A Streamlit rerun/restart
+    # must not make the same molecule appear unattempted.
+    if on_submit_armed is not None:
+        on_submit_armed()
     # Point of no return: exactly one final click; never auto-retry.
     try:
         final.click(timeout=25000)
@@ -616,7 +620,15 @@ def submit_pending(compounds, email, jobs=None, progress=None, on_checkpoint=Non
                 if progress:
                     progress(index-1, len(pending), cid, "PREPARING")
                 try:
-                    job = _submit_one(page, item, email)
+                    def mark_armed():
+                        jobs[cid] = {
+                            "job_id": "",
+                            "status": "SUBMISSION_UNKNOWN",
+                            "error": "Final Submit attempt armed; waiting for server confirmation",
+                        }
+                        if on_checkpoint:
+                            on_checkpoint(dict(jobs))
+                    job = _submit_one(page, item, email, on_submit_armed=mark_armed)
                     jobs[cid] = {"job_id": job, "status": "SUBMITTED", "error": ""}
                     if on_checkpoint:
                         on_checkpoint(dict(jobs))
