@@ -1,73 +1,56 @@
 # TNT–STP–PMM
 
-Reusable compound-to-human-target prediction workflows for **TargetNet (TNT)**, **SwissTargetPrediction (STP)**, and **PharmMapper (PMM)**.
+Streamlit web app for **real target prediction and result collection** through **TargetNet**, **SwissTargetPrediction**, and **PharmMapper**. The example CSV contains the original **17 EMNE analogues (A0–A16)**.
 
-## Status
+## Use the app
 
-This repository is being migrated from preserved October 2026 runner packages. **Do not interpret the presence of a runner as proof of successful live submission.**
+1. Open the Streamlit deployment and keep **Use built-in EMNE A0–A16** selected, or uncheck it and upload any CSV with `compound_id,smiles`.
+2. **SwissTargetPrediction:** choose **Collect existing 17** to reuse previously computed A0–A16 jobs, or expand **Submit NEW SwissTargetPrediction jobs** for new predictions. The new-job adapter drives Chromium and captures confirmed result IDs, target tables, and CSVs.
+3. **TargetNet:** click **Run TargetNet** to upload the selected SMILES as a single batch; only after a verified raw TSV download does the app create per-compound CSVs.
+4. **PharmMapper:** provide your own notification email, click **Submit pending PharmMapper jobs**, save the downloadable **job checkpoint JSON**, and later click **Check and collect completed jobs**. The app builds 3D SDF V2000 from SMILES using RDKit and will not exceed ten potentially active jobs.
+5. Download ZIP archives of **actual returned** results; incomplete or unknown submissions must not be mistaken for successful predictions.
 
-| Provider | Preserved runner | Evidence | Status |
-| --- | --- | --- | --- |
-| TargetNet | `TargetNet_A0_A16_runner.zip` | A0–A16 results archive exists | Historical output; live automation not revalidated |
-| SwissTargetPrediction | `SwissTarget_A0_A16_runner_v2.zip` | A0–A16 results archive exists | Historical output; live automation not revalidated |
-| PharmMapper | `PharmMapper_A0_A16_runner_v5_fresh.zip`; `PharmMapper-Automation-v0.1.0.zip` | Direct collection succeeded for 17/17 existing job IDs | Collector verified historically; submission still needs validation |
+### What is new
 
-## Proven strategy
+- `providers/targetnet.py`: actual Playwright upload → model evaluation → raw TSV → per-compound CSVs
+- `providers/swiss.py`: actual browser-driven predictions for arbitrary SMILES; fail-fast reporting with no fabricated URLs
+- `providers/swiss_cached.py`: fast *reuse* for the exact historical A0–A16 inputs (this is **not a new prediction**)
+- `providers/pharmmapper_live.py`: new SDF preparation, Human Protein Targets Only selection, guarded submission, job ID capture, collection and checkpoint support
+- `providers/pharmmapper.py`: previous job collector for the original A0–A16 panel
+- `examples/compounds.csv`: A0–A16 SMILES used by the original study
 
-1. Validate compound identifier, original SMILES and source file.
-2. Persist a durable manifest **before** network activity.
-3. Submit via the provider's actual supported interface, using Playwright only where necessary.
-4. Capture verified job IDs and results URLs. Never infer IDs from time or the order of submissions.
-5. Resume polling and download artifacts using direct HTTP endpoints where reliable.
-6. Preserve **raw** provider exports, record source/provenance, and generate normalized tables separately.
-7. Package raw outputs, per-compound results, manifest, errors and checksums.
+## Deploy on Streamlit Community Cloud
 
-## Layout
+At [share.streamlit.io](https://share.streamlit.io), create or update the app using:
 
-- `docs/MIGRATION.md`: exact preserved source packages and verification requirements
-- `docs/ARCHITECTURE.md`: workflow contracts and safety constraints
-- `examples/compounds.csv`: generic example input
-- `scripts/validate_compounds.py`: dependency-free input validation and manifest initialization
-- `.github/workflows/ci.yml`: offline validation CI
+- Repository: `peterDataScientia/TNT-STP-PMM`
+- Branch: `main`
+- Main file: `app.py`
 
-## First run
+The `requirements.txt` installs Streamlit, Playwright, Requests, BeautifulSoup, RDKit. `packages.txt` requests Linux Chromium. Code pushed to GitHub is **not by itself proof of live Streamlit deployment**.
 
-```bash
-python scripts/validate_compounds.py examples/compounds.csv --output runs/demo/manifest.csv
-python -m unittest discover -s tests -v
-```
-
-**Important:** This initial repository bootstrap is not a functional 3-provider submitter. The original packages still need to be imported and live-tested before this label is warranted.
-
-## Scientific and operational safeguards
-
-Use public provider interfaces in accordance with terms and rate limits. No CAPTCHA bypass, credential collection, or speculative job completion claims. Retain original inputs and output provenance. Do not silently mix protein-level predictions with harmonized unique human gene symbols.
-
-
-## Streamlit application
-
-The Streamlit frontend is implemented in `app.py` (batch input inspection, provider selection, downloadable audit manifest ZIP, and read-only ZIP inspection).
-
-### Run locally
+### Run on a suitable Linux/Windows server
 
 ```bash
 python -m pip install -r requirements.txt
+python -m playwright install chromium
 streamlit run app.py
 ```
 
-### Deploy on Streamlit Community Cloud
+Chromium must be installed and permitted on the hosting environment.
 
-1. Open [share.streamlit.io](https://share.streamlit.io) and choose **Create app**.
-2. Select `peterDataScientia/TNT-STP-PMM`, branch `main`, and entrypoint `app.py`.
-3. Deploy and use the **Prepare batch** tab to produce an auditable manifest.
-4. Treat the disabled **Run predictions** control as intentional. A persistent worker plus audited provider adapters must be added before allowing live jobs.
+## Performance and persistence
 
-There is **no deployed URL until the app is created on Streamlit Community Cloud**. GitHub pushes alone do not create a Streamlit deployment.
+Remote computation has no instant shortcut for **new** SMILES. TargetNet computes a batch on its server; SwissTargetPrediction calculates a job per compound; PharmMapper queues remote 3D predictions. Browser startup, provider queues and network latency may make these tasks take minutes. The **FAST** Swiss option only retrieves already-completed A0–A16 results.
 
-The interface does not upload compounds anywhere except to the Streamlit instance running it. A public Streamlit deployment should not be used for confidential chemical structures unless appropriate access controls are configured.
+**Streamlit Community Cloud is not a durable job worker.** PharmMapper checkpoint JSON protects recognized job IDs across sessions when the user downloads it. If the server restarts while a final submission is in flight, confirm the result from the provider before resubmitting. Do not claim completion from a `PENDING` manifest or any arbitrary HTTP response.
 
-## Current live interface (October 2026)
+## Tests and verification
 
-`app.py` now offers **real SwissTargetPrediction submissions** from uploaded CSV files, with target ZIP exports. It also offers **real PharmMapper CSV retrieval** for previously submitted A0–A16 job IDs (no new PharmMapper submission). Both operations show collected/failed counts based on actual remote responses.
+GitHub Actions checks Python compilation, example validation and unit tests of TargetNet column mapping, Swiss target-row completeness and PharmMapper job ID rules. **Live end-to-end execution of all three providers on the user's deployment remains to be confirmed**; third-party site markup, rate limits and Cloud browser support can change.
 
-**TargetNet browser execution is not yet integrated**; it remains a separate legacy runner requiring a Playwright-equipped worker. Streamlit Community Cloud processes can stop/restart and do not provide durable job execution. These backend adapters have not yet passed a live cloud end-to-end test. The former PENDING-only manifest flow has been removed from the UI.
+The original local runner ZIPs are inventoried in [docs/MIGRATION.md](docs/MIGRATION.md). The new adapters are based on their working workflows; no claim is made that every legacy source file has been imported unchanged.
+
+## Research integrity
+
+Store raw outputs and source URLs. Keep species, provider, model threshold, job ID and errors with each result. Swiss/TargetNet probability and PharmMapper z-score are separate quantities. A submitted job is not a completed prediction. Follow each provider's terms, don't bypass access checks, and don't expose unpublished molecular structures or email addresses on public deployments.
