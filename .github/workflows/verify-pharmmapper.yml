@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - '.github/workflows/verify-pharmmapper.yml'
+      - 'scripts/check_historical_pharmmapper.py'
   workflow_dispatch:
 jobs:
   collect:
