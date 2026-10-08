@@ -230,25 +230,153 @@ def _valid_job(value):
         return False
 
 
-def _confirmed_job_id(page, urls):
-    candidates = list(urls) + [page.url]
+def _candidate_job_ids(value):
+    """Extract timestamp-shaped job IDs from a strong, job-related context."""
+    return [
+        match.group(1) for match in re.finditer(r"(?<!\d)(\d{12})(?!\d)", str(value))
+        if _valid_job(match.group(1))
+    ]
+
+
+def _confirmed_job_id(page, urls, network_bodies=None, dialogs=None):
+    """Recover server job ID from all documented / legacy observed surfaces.
+
+    Strong evidence is preferred: provider results URLs, clipboard payloads,
+    or job-labelled fields. Unrelated timestamps in general page HTML are not
+    accepted as submitted job IDs.
+    """
     try:
-        candidates.extend(page.locator("a[href]").evaluate_all("es=>es.map(e=>e.href||'')"))
-        candidates.extend(page.locator("[data-clipboard-text]").evaluate_all(
-            "es=>es.map(e=>e.getAttribute('data-clipboard-text')||'')"))
+        pages = list(page.context.pages)
     except Exception:
-        pass
-    candidates.append(page.content())
-    for text in candidates:
-        for pattern in (
-            r"/results/(\d{12})(?:\.html|/|\?|[\"'])",
-            r"data-clipboard-text=[\"'](\d{12})[\"']",
-            r"(?:job(?:_|-)?id|jobid)[^0-9]{0,120}(\d{12})",
-        ):
-            for match in re.finditer(pattern, str(text), re.I):
-                if _valid_job(match.group(1)):
-                    return match.group(1)
+        pages = [page]
+    pages = pages or [page]
+
+    def strong_url(value):
+        value = str(value)
+        if not re.search(r"(?:/results?/|[?&](?:job_?id|jobid)=)", value, re.I):
+            return None
+        for job in _candidate_job_ids(value):
+            return job
+        return None
+
+    for candidate in (list(urls) + [getattr(p, "url", "") for p in pages]):
+        job = strong_url(candidate)
+        if job:
+            return job
+
+    for document in pages:
+        try:
+            links = document.locator("a[href]").evaluate_all(
+                "els => els.map(e => e.href || '')"
+            )
+            for candidate in links:
+                job = strong_url(candidate)
+                if job:
+                    return job
+        except Exception:
+            pass
+
+        try:
+            clip = document.locator("[data-clipboard-text]").evaluate_all(
+                "els => els.map(e => e.getAttribute('data-clipboard-text') || '')"
+            )
+            for candidate in clip:
+                matches = _candidate_job_ids(candidate)
+                if matches:
+                    return matches[0]
+        except Exception:
+            pass
+
+        # Common COPY button points at an input/span containing the job number.
+        try:
+            targets = document.locator("[data-clipboard-target]").evaluate_all(
+                "els => els.map(e => e.getAttribute('data-clipboard-target') || '')"
+            )
+            for selector in targets:
+                if not selector or not selector.startswith(("#", ".", "[")):
+                    continue
+                try:
+                    el = document.locator(selector).first
+                    candidates = [
+                        el.get_attribute("value"), el.input_value(),
+                        el.inner_text(), el.text_content(),
+                    ]
+                    for candidate in candidates:
+                        matches = _candidate_job_ids(candidate)
+                        if matches:
+                            return matches[0]
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # A result page may keep its ID in hidden input attributes.
+        try:
+            inputs = document.locator("input, textarea").evaluate_all(
+                """els => els.map(e => ({
+                  value:e.value||e.getAttribute('value')||'',
+                  context:[e.id||'',e.name||'',e.getAttribute('aria-label')||'',
+                           e.closest('label')?.textContent||''].join(' ')
+                }))"""
+            )
+            for row in inputs:
+                if not re.search(r"job|result|copy|clip|task", row["context"], re.I):
+                    continue
+                matches = _candidate_job_ids(row["value"])
+                if matches:
+                    return matches[0]
+        except Exception:
+            pass
+
+        try:
+            html = document.content()
+            patterns = (
+                r"/results/(\d{12})(?:\.html|/|\?|[\"'])",
+                r"data-clipboard-text=[\"'](\d{12})[\"']",
+                r"(?:job(?:_|-)?id|jobid)[^0-9]{0,120}(\d{12})",
+                r"(?:value|content)=[\"'](\d{12})[\"']",
+            )
+            for pattern in patterns:
+                for found in re.finditer(pattern, html, re.I | re.S):
+                    if _valid_job(found.group(1)):
+                        return found.group(1)
+        except Exception:
+            pass
+
+    for candidate in list(network_bodies or []) + list(dialogs or []):
+        if re.search(r"job|result|success|submit", str(candidate), re.I):
+            matches = _candidate_job_ids(candidate)
+            if matches:
+                return matches[0]
     return None
+
+
+def _submission_diagnostics(page, network_urls, dialogs):
+    """Small, shareable account-free diagnostic for unresolved submit."""
+    from urllib.parse import urlsplit, urlunsplit
+    def clean_url(url):
+        try:
+            parsed = urlsplit(str(url))
+            return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        except Exception:
+            return str(url)[:200]
+    try:
+        text = page.locator("body").inner_text(timeout=5000)
+    except Exception:
+        text = ""
+    # Avoid exporting a potentially personal email address or the raw molecule.
+    text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[redacted-email]", text)
+    try:
+        current = clean_url(page.url)
+    except Exception:
+        current = ""
+    return {
+        "last_url": current,
+        "page_excerpt": text[:1200],
+        "requests": [clean_url(x) for x in network_urls[-15:]],
+        "dialogs": [re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}",
+                           "[redacted-email]", str(x))[:300] for x in dialogs[-5:]],
+    }
 
 
 def _submit_one(page, record, email):
@@ -289,23 +417,53 @@ def _submit_one(page, record, email):
     if final is None:
         raise ValueError("Cannot find final Submit button")
     network = []
+    network_bodies = []
+    dialogs = []
     page.on("response", lambda response: network.append(response.url))
+    def on_request_finished(request):
+        try:
+            response = request.response()
+            if not response:
+                return
+            ctype = response.headers.get("content-type", "").lower()
+            if any(x in ctype for x in ("json", "text", "html")):
+                body = response.text()
+                if body and len(body) <= 100_000:
+                    network_bodies.append(body)
+        except Exception:
+            pass
+    page.on("requestfinished", on_request_finished)
+    def on_dialog(dialog):
+        dialogs.append(dialog.message)
+        dialog.accept()
+    page.on("dialog", on_dialog)
     # Point of no return: do not retry this compound if confirmation is missing.
     try:
         final.click(timeout=25000)
     except Exception as exc:
-        raise SubmissionUnknown("Submit was clicked but completion is unknown") from exc
+        diagnostic = _submission_diagnostics(page, network, dialogs)
+        raise SubmissionUnknown(
+            "Final Submit click outcome unknown; check job history before retry",
+            diagnostic,
+        ) from exc
     deadline = time.monotonic() + 35
     while time.monotonic() < deadline:
-        job = _confirmed_job_id(page, network)
+        job = _confirmed_job_id(page, network, network_bodies, dialogs)
         if job:
             return job
         page.wait_for_timeout(750)
-    raise SubmissionUnknown("Final Submit was clicked, but no 12-digit job ID was confirmed")
+    diagnostic = _submission_diagnostics(page, network, dialogs)
+    raise SubmissionUnknown(
+        "Final Submit was clicked, but job ID could not be confirmed. "
+        "Do not resubmit; recover the job ID from PharmMapper's email or job history.",
+        diagnostic,
+    )
 
 
 class SubmissionUnknown(RuntimeError):
-    pass
+    def __init__(self, message, diagnostics=None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 
 def submit_pending(compounds, email, jobs=None, progress=None, on_checkpoint=None):
@@ -338,7 +496,7 @@ def submit_pending(compounds, email, jobs=None, progress=None, on_checkpoint=Non
                         progress(index, len(pending), cid, "SUBMITTED")
                 except SubmissionUnknown as exc:
                     jobs[cid] = {"job_id": "", "status": "SUBMISSION_UNKNOWN",
-                                 "error": str(exc)}
+                                 "error": str(exc), "diagnostics": exc.diagnostics}
                     if on_checkpoint:
                         on_checkpoint(dict(jobs))
                     if progress:
