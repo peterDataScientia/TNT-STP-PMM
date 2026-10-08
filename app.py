@@ -7,6 +7,12 @@ from providers.swiss import run_swiss
 from providers.swiss_cached import collect_existing_swiss, is_reference_batch
 from providers.pharmmapper import collect_pharmmapper, JOB_IDS
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_reference_archive(compound_pairs):
+    """Cache already-completed A0–A16 retrievals for one hour."""
+    payload = [{"compound_id": cid, "smiles": smiles} for cid, smiles in compound_pairs]
+    return collect_existing_swiss(payload)
+
 st.set_page_config(page_title="TNT-STP-PMM", page_icon="🧬", layout="wide")
 st.title("TNT–STP–PMM")
 st.caption("TargetNet · SwissTargetPrediction · PharmMapper")
@@ -68,7 +74,7 @@ with swiss_tab:
             st.session_state.pop("swiss_result", None)
             with st.spinner("Retrieving existing result tables in parallel; no new submissions"):
                 try:
-                    archive, count, errors = collect_existing_swiss(records)
+                    archive, count, errors = get_reference_archive(tuple((r["compound_id"], r["smiles"]) for r in records))
                     st.session_state["swiss_result"] = (archive, count, errors, "existing")
                 except Exception as exc:
                     st.error(f"Existing result retrieval failed: {exc}")
