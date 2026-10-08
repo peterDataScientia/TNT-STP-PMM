@@ -62,6 +62,16 @@ def run_swiss(compounds, progress=None):
                     response=session.post(location,data=form,headers={"Referer":INDEX,"Origin":BASE},timeout=180)
                 response.raise_for_status()
                 url=_job_url(response.text)
+                # Accept an actual result URL reached through an HTTP redirect.
+                if not url and "result.php?job=" in response.url:
+                    url = response.url
+                if not url:
+                    refresh = response.headers.get("Refresh", "")
+                    hit = re.search(r"url=(.+)", refresh, re.I)
+                    if hit:
+                        candidate = urljoin(BASE + "/", hit.group(1).strip(" '\\\""))
+                        if "result.php?job=" in candidate and candidate.startswith(BASE + "/"):
+                            url = candidate
                 if not url:
                     # Preserve the actual response for troubleshooting; never fabricate a job URL.
                     diagnostic = f"SwissTargetPrediction/debug/{cid}_predict_response.html"
