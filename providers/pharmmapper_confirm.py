@@ -133,3 +133,37 @@ def job_id_from_live_page(page):
     for value in snapshot.get("values", []):
         candidates.update(_ids(value))
     return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def job_id_from_copy_button(page):
+    """As a final fallback, activate site's COPY control in isolated Chromium.
+
+    This reads only the automated browser's clipboard, not the user's device.
+    It is attempted solely on an explicitly confirmed success page.
+    """
+    try:
+        text = page.locator("body").inner_text(timeout=3000)
+        if not SUCCESS.search(text):
+            return None
+        origin = "https://www.lilab-ecust.cn"
+        try:
+            page.context.grant_permissions(
+                ["clipboard-read", "clipboard-write"], origin=origin
+            )
+        except Exception:
+            pass
+        copy = page.get_by_text("COPY", exact=True)
+        if not copy.count():
+            return None
+        copy.first.click(timeout=3000)
+        value = page.evaluate("""async () => {
+          try { return await navigator.clipboard.readText(); }
+          catch (_) { return ''; }
+        }""")
+        value = str(value or "").strip()
+        if valid_job_id(value):
+            return value
+        candidates = set(_ids(value))
+        return next(iter(candidates)) if len(candidates) == 1 else None
+    except Exception:
+        return None
