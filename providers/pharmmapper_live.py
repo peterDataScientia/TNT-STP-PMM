@@ -15,6 +15,9 @@ from urllib.parse import urlparse
 import requests
 
 from providers.swiss import _launch_browser
+from providers.pharmmapper_confirm import (
+    is_submission_confirmed, job_id_from_confirmation, job_id_from_live_page,
+)
 
 SUBMIT_SITES = (
     "https://www.lilab-ecust.cn/pharmmapper/submitfile.html",
@@ -245,6 +248,16 @@ def _confirmed_job_id(page, urls, network_bodies=None, dialogs=None):
     or job-labelled fields. Unrelated timestamps in general page HTML are not
     accepted as submitted job IDs.
     """
+    # A successful PharmMapper confirmation places its job number next to COPY.
+    # It may live in a nameless input.value assigned by JavaScript.
+    for page_html in list(network_bodies or []):
+        identified = job_id_from_confirmation(page_html)
+        if identified:
+            return identified
+    identified = job_id_from_live_page(page)
+    if identified:
+        return identified
+
     try:
         pages = list(page.context.pages)
     except Exception:
@@ -425,6 +438,13 @@ def _server_rejection(payload):
     return body[:500]
 
 
+class SubmissionAcceptedWithoutId(RuntimeError):
+    """The server confirms acceptance, but the resulting job ID is unreadable."""
+    def __init__(self, message, diagnostics=None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
+
+
 class SubmissionRejected(RuntimeError):
     """The remote provider explicitly rejected a POST response."""
     def __init__(self, message, diagnostics=None):
@@ -510,12 +530,19 @@ def _submit_one(page, record, email, on_submit_armed=None):
     inspected = set()
     response_bodies = []
     response_evidence = []
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + 20
+    confirmed_success = False
     while time.monotonic() < deadline:
         # First check page navigation, new tabs and any visible confirmation.
         job = _confirmed_job_id(page, network_urls, response_bodies, dialogs)
         if job:
             return job
+
+        try:
+            if is_submission_confirmed(page.content()):
+                confirmed_success = True
+        except Exception:
+            pass
 
         # Read network bodies on the NORMAL caller stack, after the callback.
         # The server may return an ERROR page that redirects away in 5 seconds.
@@ -537,6 +564,8 @@ def _submit_one(page, record, email, on_submit_armed=None):
                 body = response.text()
                 if body and len(body) <= 100_000:
                     response_bodies.append(body)
+                    if is_submission_confirmed(body):
+                        confirmed_success = True
                     job = _confirmed_job_id(
                         page, network_urls, [body], dialogs
                     )
@@ -581,6 +610,16 @@ def _submit_one(page, record, email, on_submit_armed=None):
 
     diagnostic = _submission_diagnostics(page, network_urls, dialogs)
     diagnostic["responses"] = response_evidence[-15:]
+    if confirmed_success or is_submission_confirmed(
+        diagnostic.get("page_excerpt", "")
+    ):
+        diagnostic["accepted"] = True
+        raise SubmissionAcceptedWithoutId(
+            "PharmMapper explicitly confirmed submission success, but "
+            "the Job ID in the COPY control could not be extracted. "
+            "Do NOT submit again; retain and recover the existing job.",
+            diagnostic,
+        )
     diagnostic["note"] = (
         "Final Submit clicked once. No server-confirmed job ID or explicit "
         "server rejection was captured. Original attempt retained."
@@ -602,7 +641,7 @@ def submit_pending(compounds, email, jobs=None, progress=None, on_checkpoint=Non
     """Submit at most 10 potentially active jobs, including unknown submissions."""
     from playwright.sync_api import sync_playwright
     jobs = dict(jobs or {})
-    active = sum(row.get("status") in ("SUBMITTED", "SUBMISSION_UNKNOWN")
+    active = sum(row.get("status") in ("SUBMITTED", "SUBMISSION_UNKNOWN", "ACCEPTED_ID_MISSING")
                  for row in jobs.values())
     slots = max(0, LIMIT - active)
     pending = [r for r in compounds if r["compound_id"] not in jobs or jobs[r["compound_id"]].get("status") == "FAILED"][:slots]
@@ -634,6 +673,14 @@ def submit_pending(compounds, email, jobs=None, progress=None, on_checkpoint=Non
                         on_checkpoint(dict(jobs))
                     if progress:
                         progress(index, len(pending), cid, "SUBMITTED")
+                except SubmissionAcceptedWithoutId as exc:
+                    jobs[cid] = {"job_id": "", "status": "ACCEPTED_ID_MISSING",
+                                 "error": str(exc), "diagnostics": exc.diagnostics}
+                    if on_checkpoint:
+                        on_checkpoint(dict(jobs))
+                    if progress:
+                        progress(index, len(pending), cid, "ACCEPTED_ID_MISSING")
+                    break
                 except SubmissionRejected as exc:
                     jobs[cid] = {"job_id": "", "status": "REJECTED",
                                  "error": str(exc), "diagnostics": exc.diagnostics}
