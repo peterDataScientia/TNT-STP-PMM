@@ -343,6 +343,18 @@ def _confirmed_job_id(page, urls, network_bodies=None, dialogs=None):
         except Exception:
             pass
 
+        try:
+            body_text = document.locator("body").inner_text(timeout=5000)
+            contextual = re.search(
+                r"(?:your\\s+)?job\\s*(?:id|number|identifier)\\s*[:#=\\-]?\\s*(\\d{12})",
+                body_text,
+                re.I,
+            )
+            if contextual and _valid_job(contextual.group(1)):
+                return contextual.group(1)
+        except Exception:
+            pass
+
     for candidate in list(network_bodies or []) + list(dialogs or []):
         if re.search(r"job|result|success|submit", str(candidate), re.I):
             matches = _candidate_job_ids(candidate)
@@ -397,6 +409,14 @@ def _submit_one(page, record, email):
                                "mimeType": "chemical/x-mdl-sdfile", "buffer": data})
     # PharmMapper uses the submitted address for validation and job tracking.
     _email_field(page).fill(email)
+    # Human-readable description helps the user match a notification email
+    # to the original compound if the confirmation page becomes unavailable.
+    for selector in ('input[name*="desc" i]', 'input[id*="desc" i]',
+                     'input[placeholder*="job" i]', 'textarea'):
+        desc = page.locator(selector)
+        if desc.count():
+            desc.first.fill(f"TNT-STP-PMM {cid}: target prediction"[:90])
+            break
     cont = _button(page, ["Continue", "Next"])
     if cont is None:
         raise ValueError("Cannot find Step 1 Continue button")
