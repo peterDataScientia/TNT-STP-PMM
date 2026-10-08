@@ -2,3 +2,4 @@ streamlit>=1.35,<2
 requests>=2.31,<3
 playwright>=1.47,<2
 beautifulsoup4>=4.12,<5
+rdkit>=2024.09,<2027
