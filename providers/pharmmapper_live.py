@@ -17,6 +17,7 @@ import requests
 from providers.swiss import _launch_browser
 from providers.pharmmapper_confirm import (
     is_submission_confirmed, job_id_from_confirmation, job_id_from_live_page,
+    job_id_from_copy_button,
 )
 
 SUBMIT_SITES = (
@@ -532,6 +533,7 @@ def _submit_one(page, record, email, on_submit_armed=None):
     response_evidence = []
     deadline = time.monotonic() + 20
     confirmed_success = False
+    copy_attempted = False
     while time.monotonic() < deadline:
         # First check page navigation, new tabs and any visible confirmation.
         job = _confirmed_job_id(page, network_urls, response_bodies, dialogs)
@@ -543,6 +545,13 @@ def _submit_one(page, record, email, on_submit_armed=None):
                 confirmed_success = True
         except Exception:
             pass
+        if confirmed_success and not copy_attempted:
+            # Site provides a visible COPY button adjacent to "Your JOB ID".
+            # This accesses only the isolated Playwright browser clipboard.
+            copy_attempted = True
+            copied_job = job_id_from_copy_button(page)
+            if copied_job:
+                return copied_job
 
         # Read network bodies on the NORMAL caller stack, after the callback.
         # The server may return an ERROR page that redirects away in 5 seconds.
