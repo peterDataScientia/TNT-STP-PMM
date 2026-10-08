@@ -152,7 +152,7 @@ with target_tab:
 with pharm_tab:
     st.subheader("PharmMapper — New job submission and collection")
     st.caption("Generates 3D SDF V2000 from uploaded SMILES. PharmMapper permits at most 10 active jobs; unfinished jobs require later collection.")
-    email = st.text_input("Email for PharmMapper job notifications", value="",
+    email = st.text_input("Optional email for PharmMapper job notifications", value="",
                           placeholder="you@example.com", key="pmm_email")
     jobs = st.session_state.get("pmm_jobs", {})
     if not isinstance(jobs, dict):
@@ -183,12 +183,12 @@ with pharm_tab:
             st.error(str(exc))
 
     active = sum(j.get("status") in ("SUBMITTED", "SUBMISSION_UNKNOWN") for j in jobs.values())
-    pending = len(records) - len(jobs)
+    pending = sum(r["compound_id"] not in jobs or jobs[r["compound_id"]].get("status") == "FAILED" for r in records)
     st.write(f"Queued: {pending} · Active/unknown: {active}/{LIMIT} · Recorded: {len(jobs)}")
     c1, c2 = st.columns(2)
     with c1:
         if records and st.button("Submit pending PharmMapper jobs", type="primary",
-                                 disabled=not email or pending == 0 or active >= LIMIT):
+                                 disabled=pending == 0 or active >= LIMIT):
             try:
                 jobs = submit_pending(records, email, jobs, progress_view())
                 st.session_state["pmm_jobs"] = jobs
