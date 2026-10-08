@@ -63,7 +63,13 @@ def run_swiss(compounds, progress=None):
                 response.raise_for_status()
                 url=_job_url(response.text)
                 if not url:
-                    raise ValueError("No confirmed SwissTargetPrediction result URL")
+                    # Preserve the actual response for troubleshooting; never fabricate a job URL.
+                    diagnostic = f"SwissTargetPrediction/debug/{cid}_predict_response.html"
+                    z.writestr(diagnostic, response.text)
+                    raise ValueError(
+                        f"No result URL (HTTP {response.status_code}; "
+                        f"final URL {response.url}; response saved to {diagnostic})"
+                    )
                 last_error=None
                 for attempt in range(12):
                     try:
