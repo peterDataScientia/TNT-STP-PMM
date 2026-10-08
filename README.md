@@ -65,3 +65,9 @@ streamlit run app.py
 There is **no deployed URL until the app is created on Streamlit Community Cloud**. GitHub pushes alone do not create a Streamlit deployment.
 
 The interface does not upload compounds anywhere except to the Streamlit instance running it. A public Streamlit deployment should not be used for confidential chemical structures unless appropriate access controls are configured.
+
+## Current live interface (October 2026)
+
+`app.py` now offers **real SwissTargetPrediction submissions** from uploaded CSV files, with target ZIP exports. It also offers **real PharmMapper CSV retrieval** for previously submitted A0–A16 job IDs (no new PharmMapper submission). Both operations show collected/failed counts based on actual remote responses.
+
+**TargetNet browser execution is not yet integrated**; it remains a separate legacy runner requiring a Playwright-equipped worker. Streamlit Community Cloud processes can stop/restart and do not provide durable job execution. These backend adapters have not yet passed a live cloud end-to-end test. The former PENDING-only manifest flow has been removed from the UI.
