@@ -77,7 +77,7 @@ def collect_existing_targetnet(records):
     if not is_reference_targetnet(records):
         raise ValueError("Fast historical TargetNet retrieval requires exact A0–A16 SMILES")
     raw = load_bundled_targetnet()
-    mapped = split_tsv(raw, records, "https://nanx.app/targetnet/")
+    mapped = split_tsv(raw, _canonical_order(records), "https://nanx.app/targetnet/")
     if len(mapped) != 17 or any(count != 623 for _, count in mapped.values()):
         raise ValueError("Original historical matrix must have 623 target predictions for each of 17 compounds")
     result = io.BytesIO()
