@@ -192,7 +192,7 @@ with pharm_tab:
             for cid, entry in recovered.items():
                 if cid not in {r["compound_id"] for r in records}:
                     raise ValueError("Unexpected compound ID")
-                if entry.get("status") not in ("SUBMITTED", "SUBMISSION_UNKNOWN", "COLLECTED", "FAILED"):
+                if entry.get("status") not in ("SUBMITTED", "SUBMISSION_UNKNOWN", "COLLECTED", "FAILED", "REJECTED"):
                     raise ValueError("Invalid status")
                 job = entry.get("job_id", "")
                 if job and not re.fullmatch(r"\d{12}", job):
@@ -218,11 +218,11 @@ with pharm_tab:
                                       on_checkpoint=lambda snapshot: st.session_state.__setitem__("pmm_jobs", snapshot))
                 st.session_state["pmm_jobs"] = jobs
                 failed_now = [(cid, entry.get("error", "")) for cid, entry in jobs.items()
-                              if entry.get("status") == "FAILED"]
+                              if entry.get("status") in ("FAILED", "REJECTED")]
                 unknown_now = [(cid, entry.get("error", "")) for cid, entry in jobs.items()
                                if entry.get("status") == "SUBMISSION_UNKNOWN"]
                 if failed_now:
-                    st.error(f"{failed_now[0][0]} pre-submit failure: {failed_now[0][1]}")
+                    st.error(f"{failed_now[0][0]}: {failed_now[0][1]}")
                 if unknown_now:
                     st.warning(
                         f"{unknown_now[0][0]}: final submission outcome UNKNOWN. "
@@ -295,6 +295,14 @@ with pharm_tab:
         snapshot = json.dumps({"input_sha256": fingerprint, "jobs": jobs}, indent=2)
         st.download_button("Save PharmMapper job checkpoint", snapshot,
                            file_name="PharmMapper_jobs.json", mime="application/json")
+        rejected = [cid for cid, row in jobs.items() if row.get("status") == "REJECTED"]
+        if rejected:
+            for cid in rejected:
+                st.error(f"{cid} explicitly rejected by PharmMapper: {jobs[cid].get('error', '')}")
+                details = jobs[cid].get("diagnostics")
+                if details:
+                    with st.expander(f"{cid} provider response diagnostics"):
+                        st.json(details)
         unknown = [cid for cid, row in jobs.items() if row.get("status") == "SUBMISSION_UNKNOWN"]
         if unknown:
             st.error("Job ID not confirmed for " + ", ".join(unknown) +
