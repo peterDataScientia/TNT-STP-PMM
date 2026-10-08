@@ -10,7 +10,7 @@ import streamlit as st
 from providers.swiss_http import run_swiss
 from providers.swiss_cached import collect_existing_swiss, is_reference_batch
 from providers.targetnet import run_targetnet
-from providers.targetnet_archive import reuse_targetnet_zip
+from providers.targetnet_archive import collect_existing_targetnet
 from providers.pharmmapper import collect_pharmmapper, JOB_IDS
 from providers.pharmmapper_live import submit_pending, collect_jobs, LIMIT
 
@@ -132,17 +132,12 @@ with swiss_tab:
 with target_tab:
     st.subheader("TargetNet — Human target prediction")
     if records and is_reference_batch(records):
-        st.success("17 original TargetNet predictions already exist (623 targets per molecule).")
-        st.caption("To reuse them without another long TargetNet calculation, upload the original completed TargetNet_A0_A16.zip.")
-        historical_zip = st.file_uploader("Completed A0–A16 TargetNet ZIP", type=["zip"], key="targetnet_archive")
-        if historical_zip is not None and st.button("Load 17 completed TargetNet results (FAST)", type="primary"):
-            st.session_state.pop("targetnet_output", None)
+        st.success("Original A0–A16 TargetNet results are bundled in the app (623 targets per compound).")
+        if st.button("Get 17 completed TargetNet results (FAST)", type="primary"):
             try:
-                st.session_state["targetnet_output"] = reuse_targetnet_zip(
-                    historical_zip.getvalue(), records
-                )
+                st.session_state["targetnet_output"] = collect_existing_targetnet(records)
             except Exception as exc:
-                st.error(f"Archived TargetNet result validation failed: {exc}")
+                st.error(f"Cannot validate archived TargetNet matrix: {exc}")
     with st.expander("Run a NEW TargetNet prediction batch", expanded=bool(records) and not is_reference_batch(records)):
         st.caption("One batch upload to the TargetNet server. Source models are filtered by AUC ≥ 0.75; raw matrix and per-compound CSVs are retained.")
         if records and st.button(f"Run TargetNet for {len(records)} compounds", type="primary"):
