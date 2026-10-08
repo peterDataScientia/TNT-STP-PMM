@@ -50,6 +50,40 @@ def split_tsv(raw, compounds, source_url):
     return result
 
 
+
+def configure_auc_filter(page):
+    """Configure hidden Selectize-backed Shiny input without select_option().
+
+    Selectize hides the underlying <select>, which Playwright refuses to act on
+    as a visible control. Shiny's input binding receives change from setValue.
+    """
+    return page.eval_on_selector(
+        "#criterionupload",
+        """element => {
+            const options = Array.from(element.options);
+            const option = options.find(o => o.value.toLowerCase() === 'auc');
+            if (!option) throw new Error('AUC is not an available criterion');
+            const before = element.selectize
+                ? element.selectize.getValue()
+                : element.value;
+            if (String(before).toLowerCase() !== 'auc') {
+                if (element.selectize) {
+                    element.selectize.setValue(option.value);
+                } else {
+                    element.value = option.value;
+                    element.dispatchEvent(new Event('change', {bubbles:true}));
+                }
+            }
+            const after = element.selectize
+                ? element.selectize.getValue()
+                : element.value;
+            if (String(after).toLowerCase() !== 'auc')
+                throw new Error('AUC selection failed');
+            return String(after);
+        }""",
+    )
+
+
 def run_targetnet(compounds, progress=None):
     """One real TargetNet server batch; no result is declared until the TSV validates."""
     from playwright.sync_api import sync_playwright
@@ -82,8 +116,8 @@ def run_targetnet(compounds, progress=None):
                     raise RuntimeError(f"TargetNet mirrors unavailable: {last_error}")
 
                 page.locator("#file1").set_input_files(str(path))
-                if page.locator("#criterionupload").count():
-                    page.locator("#criterionupload").select_option("auc")
+                # Actual widget is Selectize-enhanced; the original select is hidden.
+                configure_auc_filter(page)
                 if progress:
                     progress(0, 1, "TargetNet", "PREDICTING")
                 page.locator("#netButtonUpload").click()
