@@ -152,8 +152,11 @@ with target_tab:
 with pharm_tab:
     st.subheader("PharmMapper — New job submission and collection")
     st.caption("Generates 3D SDF V2000 from uploaded SMILES. PharmMapper permits at most 10 active jobs; unfinished jobs require later collection.")
-    email = st.text_input("Optional email for PharmMapper job notifications", value="",
+    email = st.text_input("Required PharmMapper notification email", value="",
                           placeholder="you@example.com", key="pmm_email")
+    st.caption("PharmMapper requires a valid email address before accepting a new job; it is not included in result downloads.")
+    if not email.strip():
+        st.info("Enter your email to enable new PharmMapper submissions. Completed historical A0–A16 results can be downloaded below without resubmitting.")
     jobs = st.session_state.get("pmm_jobs", {})
     if not isinstance(jobs, dict):
         jobs = {}
@@ -188,11 +191,15 @@ with pharm_tab:
     c1, c2 = st.columns(2)
     with c1:
         if records and st.button("Submit pending PharmMapper jobs", type="primary",
-                                 disabled=pending == 0 or active >= LIMIT):
+                                 disabled=(not email.strip()) or pending == 0 or active >= LIMIT):
             try:
                 jobs = submit_pending(records, email, jobs, progress_view(),
                                       on_checkpoint=lambda snapshot: st.session_state.__setitem__("pmm_jobs", snapshot))
                 st.session_state["pmm_jobs"] = jobs
+                failed_now = [(cid, entry.get("error", "")) for cid, entry in jobs.items()
+                              if entry.get("status") in ("FAILED", "SUBMISSION_UNKNOWN")]
+                if failed_now:
+                    st.error(f"{failed_now[0][0]} submission failed: {failed_now[0][1]}")
             except Exception as exc:
                 st.error(f"PharmMapper submission error: {exc}")
     with c2:
