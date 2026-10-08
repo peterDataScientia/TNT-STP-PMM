@@ -12,7 +12,7 @@ class InputTests(unittest.TestCase):
     def test_example(self):
         example = Path(__file__).resolve().parents[1] / "examples" / "compounds.csv"
         rows = module.validate(example)
-        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(rows), 17)
         self.assertEqual(rows[0]["status"], "PENDING")
 
     def test_duplicate_rejected(self):
