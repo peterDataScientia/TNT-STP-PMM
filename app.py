@@ -17,6 +17,8 @@ from providers.pharmmapper_live import submit_pending, collect_jobs, LIMIT
 st.set_page_config(page_title="TNT–STP–PMM", page_icon="🧬", layout="wide")
 ROOT = Path(__file__).resolve().parent
 EXAMPLE = ROOT / "examples" / "compounds.csv"
+BUILD_ID = "pmm-response-capture-20261008"
+
 
 def parse_csv(raw):
     if len(raw) > 5_000_000:
@@ -66,6 +68,7 @@ def progress_view():
 
 st.title("TNT–STP–PMM")
 st.caption("TargetNet · SwissTargetPrediction · PharmMapper | Human target prediction")
+st.caption(f"App build: {BUILD_ID} · If this identifier is missing, the deployed app is running old code.")
 
 left, right = st.columns(2)
 with left:
@@ -225,9 +228,9 @@ with pharm_tab:
                     st.error(f"{failed_now[0][0]}: {failed_now[0][1]}")
                 if unknown_now:
                     st.warning(
-                        f"{unknown_now[0][0]}: final submission outcome UNKNOWN. "
-                        "It may be accepted by PharmMapper. Do not click Submit again. "
-                        "Recover the job ID below."
+                        f"{unknown_now[0][0]} has an unconfirmed submission attempt. "
+                        "The app has preserved its evidence instead of generating a duplicate job. "
+                        "Inspect the diagnostic and recovery controls below."
                     )
             except Exception as exc:
                 st.error(f"PharmMapper submission error: {exc}")
@@ -261,6 +264,40 @@ with pharm_tab:
             st.markdown(
                 "[Open PharmMapper Check Job](https://www.lilab-ecust.cn/pharmmapper/check.html)"
             )
+            # For the exact original research panel, a previously completed
+            # prediction may be reused *without claiming the unknown new
+            # submission succeeded*. A remote result must validate first.
+            if reference:
+                history = [cid for cid in unknown_ids if cid in JOB_IDS]
+                if history and st.button(
+                    "Use confirmed PREVIOUS result for " + ", ".join(history),
+                    help="Uses historical PharmMapper job IDs, NOT the uncertain new submissions.",
+                ):
+                    from providers.pharmmapper_live import _fetch_job
+                    recovered = []
+                    for cid in history:
+                        historical = JOB_IDS[cid]
+                        blob = _fetch_job(cid, historical)
+                        if not blob:
+                            st.error(f"Previous result for {cid} could not be verified; unknown attempt unchanged.")
+                            continue
+                        previous = dict(jobs[cid])
+                        jobs[cid] = {
+                            "job_id": historical,
+                            "status": "SUBMITTED",
+                            "verification": "historical_existing_job",
+                            "previous_unconfirmed_attempt": previous,
+                            "error": "Reused completed historical job; NOT a new submission.",
+                        }
+                        recovered.append(cid)
+                    st.session_state["pmm_jobs"] = dict(jobs)
+                    if recovered:
+                        st.success(
+                            "Historical results attached for " + ", ".join(recovered) +
+                            ". Use Check and collect completed jobs. "
+                            "Unconfirmed new attempts remain in provenance."
+                        )
+
             with st.expander("Recover previously submitted job (NO resubmission)",
                              expanded=True):
                 recover_cid = st.selectbox("Compound with unknown submission",
