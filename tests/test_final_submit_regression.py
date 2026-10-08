@@ -18,6 +18,13 @@ class SubmissionRegressionTests(unittest.TestCase):
         source = inspect.getsource(live._submit_one)
         self.assertEqual(source.count("final.click("), 1)
 
+    def test_submission_is_checkpointed_before_final_click(self):
+        source = inspect.getsource(live._submit_one)
+        self.assertLess(source.index("on_submit_armed()"), source.index("final.click("))
+        wrapper = inspect.getsource(live.submit_pending)
+        self.assertIn("on_submit_armed=mark_armed", wrapper)
+        self.assertIn('"status": "SUBMISSION_UNKNOWN"', wrapper)
+
     def test_reference_unknown_can_be_preserved(self):
         # A recorded SUBMISSION_UNKNOWN must never be included in new batch.
         record = [{"compound_id": "A0", "smiles": "CCO"}]
