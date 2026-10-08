@@ -10,6 +10,7 @@ import streamlit as st
 from providers.swiss_http import run_swiss
 from providers.swiss_cached import collect_existing_swiss, is_reference_batch
 from providers.targetnet import run_targetnet
+from providers.targetnet_archive import reuse_targetnet_zip
 from providers.pharmmapper import collect_pharmmapper, JOB_IDS
 from providers.pharmmapper_live import submit_pending, collect_jobs, LIMIT
 
@@ -33,6 +34,10 @@ def parse_csv(raw):
     if any(not re.fullmatch(r"[A-Za-z0-9_.-]{1,60}", name) for name in names):
         raise ValueError("IDs may contain only letters, numbers, _, - and .")
     return data
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_existing_pharmmapper():
+    return collect_pharmmapper()
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_existing_swiss(items):
@@ -125,16 +130,29 @@ with swiss_tab:
     show_result("SwissTargetPrediction", "swiss_output", "SwissTargetPrediction_targets.zip")
 
 with target_tab:
-    st.subheader("TargetNet — Live batch prediction")
-    st.caption("One batch upload to the TargetNet server. Source models are filtered by AUC ≥ 0.75; raw matrix and per-compound CSVs are retained.")
-    if records and st.button(f"Run TargetNet for {len(records)} compounds", type="primary"):
-        st.session_state.pop("targetnet_output", None)
-        try:
-            bundle, ok, failed = run_targetnet(records, progress_view())
-            st.session_state["targetnet_output"] = (bundle, ok, failed)
-        except Exception as exc:
-            st.error(f"TargetNet execution failed: {exc}")
-    show_result("TargetNet", "targetnet_output", "TargetNet_predictions.zip")
+    st.subheader("TargetNet — Human target prediction")
+    if records and is_reference_batch(records):
+        st.success("17 original TargetNet predictions already exist (623 targets per molecule).")
+        st.caption("To reuse them without another long TargetNet calculation, upload the original completed TargetNet_A0_A16.zip.")
+        historical_zip = st.file_uploader("Completed A0–A16 TargetNet ZIP", type=["zip"], key="targetnet_archive")
+        if historical_zip is not None and st.button("Load 17 completed TargetNet results (FAST)", type="primary"):
+            st.session_state.pop("targetnet_output", None)
+            try:
+                st.session_state["targetnet_output"] = reuse_targetnet_zip(
+                    historical_zip.getvalue(), records
+                )
+            except Exception as exc:
+                st.error(f"Archived TargetNet result validation failed: {exc}")
+    with st.expander("Run a NEW TargetNet prediction batch", expanded=bool(records) and not is_reference_batch(records)):
+        st.caption("One batch upload to the TargetNet server. Source models are filtered by AUC ≥ 0.75; raw matrix and per-compound CSVs are retained.")
+        if records and st.button(f"Run TargetNet for {len(records)} compounds", type="primary"):
+            st.session_state.pop("targetnet_output", None)
+            try:
+                bundle, ok, failed = run_targetnet(records, progress_view())
+                st.session_state["targetnet_output"] = (bundle, ok, failed)
+            except Exception as exc:
+                st.error(f"TargetNet execution failed: {exc}")
+        show_result("TargetNet", "targetnet_output", "TargetNet_predictions.zip")
 
 with pharm_tab:
     st.subheader("PharmMapper — New job submission and collection")
@@ -204,15 +222,16 @@ with pharm_tab:
     show_result("PharmMapper", "pmm_output", "PharmMapper_collected_jobs.zip")
 
     if reference:
-        with st.expander("Download already completed A0–A16 PharmMapper jobs"):
-            if st.button("Collect 17 historical PharmMapper CSVs"):
-                try:
-                    archive, count, errors = collect_pharmmapper(progress_view())
-                    st.session_state["pmm_historical"] = (archive, count, errors)
-                except Exception as exc:
-                    st.error(str(exc))
-            show_result("Historical PharmMapper", "pmm_historical",
-                        "PharmMapper_A0_A16_historical.zip")
+        st.divider()
+        st.subheader("Previous A0–A16 PharmMapper predictions — FAST")
+        if st.button("Get 17 completed PharmMapper results (FAST)", type="primary"):
+            try:
+                archive, count, errors = get_existing_pharmmapper()
+                st.session_state["pmm_historical"] = (archive, count, errors)
+            except Exception as exc:
+                st.error(f"PharmMapper retrieval failed: {exc}")
+        show_result("Historical PharmMapper", "pmm_historical",
+                    "PharmMapper_A0_A16_historical.zip")
 
 st.divider()
 st.caption("Only server-confirmed predictions are marked COLLECTED. Streamlit Community Cloud is not a durable background worker: download PharmMapper checkpoints to resume after a server restart.")
