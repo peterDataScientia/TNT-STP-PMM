@@ -218,9 +218,17 @@ with pharm_tab:
                                       on_checkpoint=lambda snapshot: st.session_state.__setitem__("pmm_jobs", snapshot))
                 st.session_state["pmm_jobs"] = jobs
                 failed_now = [(cid, entry.get("error", "")) for cid, entry in jobs.items()
-                              if entry.get("status") in ("FAILED", "SUBMISSION_UNKNOWN")]
+                              if entry.get("status") == "FAILED"]
+                unknown_now = [(cid, entry.get("error", "")) for cid, entry in jobs.items()
+                               if entry.get("status") == "SUBMISSION_UNKNOWN"]
                 if failed_now:
-                    st.error(f"{failed_now[0][0]} submission failed: {failed_now[0][1]}")
+                    st.error(f"{failed_now[0][0]} pre-submit failure: {failed_now[0][1]}")
+                if unknown_now:
+                    st.warning(
+                        f"{unknown_now[0][0]}: final submission outcome UNKNOWN. "
+                        "It may be accepted by PharmMapper. Do not click Submit again. "
+                        "Recover the job ID below."
+                    )
             except Exception as exc:
                 st.error(f"PharmMapper submission error: {exc}")
     with c2:
@@ -249,6 +257,9 @@ with pharm_tab:
             st.warning(
                 "PharmMapper may already have accepted these jobs. "
                 "Do NOT resubmit. Check the confirmation email or Job Check page."
+            )
+            st.markdown(
+                "[Open PharmMapper Check Job](https://www.lilab-ecust.cn/pharmmapper/check.html)"
             )
             with st.expander("Recover previously submitted job (NO resubmission)",
                              expanded=True):
