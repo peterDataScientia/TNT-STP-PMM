@@ -20,7 +20,6 @@ HEADERS = ["compound_id", "smiles", "Target", "Common_name", "Uniprot_ID",
 def _launch_browser(playwright):
     binary = shutil.which("chromium") or shutil.which("chromium-browser")
     if not binary:
-        from playwright._impl._driver import compute_driver_executable
         try:
             subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
                            check=True, capture_output=True, text=True, timeout=180)
@@ -36,7 +35,7 @@ def _extract_all_rows(page):
         const clean = v => {
             const node = document.createElement('div');
             node.innerHTML = String(v == null ? '' : v);
-            return (node.textContent || '').replace(/\\s+/g,' ').trim();
+            return (node.textContent || '').replace(/\s+/g,' ').trim();
         };
         const table = document.querySelector('#resultTable');
         if (!table) return [];
@@ -54,7 +53,7 @@ def _extract_all_rows(page):
         raise RuntimeError("No target rows in SwissTargetPrediction result table")
     # Avoid quietly exporting only page 1 if the table is paginated.
     count = page.locator("#resultTable_info").inner_text() if page.locator("#resultTable_info").count() else ""
-    match = re.search(r"of\\s+([0-9,]+)\\s+entries", count, re.I)
+    match = re.search(r"of\s+([0-9,]+)\s+entries", count, re.I)
     if match and int(match.group(1).replace(",", "")) > len(rows):
         raise RuntimeError(f"Incomplete export: {len(rows)} rows, site reports {match.group(1)}")
     return rows
@@ -94,7 +93,7 @@ def run_swiss(compounds, progress=None):
                             submit.first.click()
                         else:
                             field.press("Enter")
-                        page.wait_for_url(re.compile(r"/result\\.php\\?job="), timeout=240000)
+                        page.wait_for_url(re.compile(r"/result\.php\?job="), timeout=240000)
                         result_url = page.url
                         job_id = parse_qs(urlparse(result_url).query).get("job", [""])[0]
                         if not job_id:
