@@ -97,3 +97,39 @@ def job_id_from_confirmation(document):
         if len(candidates) == 1:
             return next(iter(candidates))
     return None
+
+
+def job_id_from_live_page(page):
+    """Inspect live value properties (not only HTML attributes).
+
+    Some PharmMapper confirmation fields have their input.value assigned by
+    JavaScript; page.content() does not necessarily serialize that property.
+    """
+    try:
+        snapshot = page.evaluate("""() => {
+          const text = document.body?.innerText || '';
+          if (!/your\s+job\s+has\s+been\s+submitted/i.test(text))
+            return {success:false, values:[], html:''};
+          const els = Array.from(document.querySelectorAll(
+            'input, textarea, button, span, a, [data-clipboard-text], [data-clipboard-target]'
+          ));
+          const attrs=['value','data-clipboard-text','data-job-id',
+                       'data-jobid','data-value','onclick','title'];
+          const values=[];
+          for (const el of els) {
+            if ('value' in el) values.push(String(el.value||''));
+            for (const key of attrs) values.push(String(el.getAttribute(key)||''));
+          }
+          return {success:true, values, html:document.documentElement.outerHTML};
+        }""")
+    except Exception:
+        return None
+    if not snapshot or not snapshot.get("success"):
+        return None
+    confirmed = job_id_from_confirmation(snapshot.get("html", ""))
+    if confirmed:
+        return confirmed
+    candidates = set()
+    for value in snapshot.get("values", []):
+        candidates.update(_ids(value))
+    return next(iter(candidates)) if len(candidates) == 1 else None
