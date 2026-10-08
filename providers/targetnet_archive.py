@@ -31,6 +31,13 @@ def is_reference_targetnet(records):
     return is_reference_batch(records)
 
 
+def _canonical_order(records):
+    """TargetNet raw column Comp.1 is A0, Comp.2 is A1, ... Comp.17 is A16."""
+    if not is_reference_targetnet(records):
+        raise ValueError("Reference molecule IDs or SMILES do not match A0–A16")
+    return sorted(records, key=lambda item: int(item["compound_id"][1:]))
+
+
 def reuse_targetnet_zip(source, records):
     if not is_reference_targetnet(records):
         raise ValueError("Historical TargetNet results are only for exact A0–A16 reference SMILES")
@@ -44,9 +51,9 @@ def reuse_targetnet_zip(source, records):
             raw = original.read(info)
     except (zipfile.BadZipFile, KeyError) as exc:
         raise ValueError("Expected the original TargetNet_A0_A16_raw.tsv in the ZIP") from exc
-    if len(raw) < 1000:
-        raise ValueError("Archive contains an incomplete TargetNet matrix")
-    mapped = split_tsv(raw, records, "https://nanx.app/targetnet/")
+    if hashlib.sha256(raw).hexdigest() != RAW_SHA256:
+        raise ValueError("Historical TargetNet ZIP has an unexpected raw-matrix SHA-256")
+    mapped = split_tsv(raw, _canonical_order(records), "https://nanx.app/targetnet/")
     if len(mapped) != 17:
         raise ValueError("Not all 17 compounds were represented")
     output = io.BytesIO()
@@ -86,6 +93,6 @@ def collect_existing_targetnet(records):
             writer.writerow([cid, "COLLECTED", count, "EXISTING_PREDICTION", RAW_SHA256])
         archive.writestr("manifest.csv", manifest.getvalue())
         archive.writestr("README.txt",
-                         "Original TargetNet A0–A16 results; these are NOT new predictions.\\n"
-                         "Raw data SHA-256 verified. Source: nanx.app/targetnet.\\n")
+                         "Original TargetNet A0–A16 results; these are NOT new predictions.\n"
+                         "Raw data SHA-256 verified. Source: nanx.app/targetnet.\n")
     return result.getvalue(), len(mapped), {}
