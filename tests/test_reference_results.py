@@ -27,6 +27,15 @@ class HistoricalResultsTest(unittest.TestCase):
             self.assertEqual(len(files),17)
             self.assertEqual(len(list(csv.DictReader(io.StringIO(
                 archive.read("per_compound_csv/A0_TargetNet.csv").decode())))),623)
+    def test_reordered_input_preserves_target_mapping(self):
+        forward, n, err = collect_existing_targetnet(self.records)
+        reversed_zip, nr, er = collect_existing_targetnet(list(reversed(self.records)))
+        self.assertEqual((n, nr), (17, 17))
+        with zipfile.ZipFile(io.BytesIO(forward)) as baseline, zipfile.ZipFile(io.BytesIO(reversed_zip)) as reordered:
+            for cid in ("A0", "A1", "A10", "A16"):
+                name = f"per_compound_csv/{cid}_TargetNet.csv"
+                self.assertEqual(baseline.read(name), reordered.read(name))
+
     def test_modified_input_rejected(self):
         copied=[dict(row) for row in self.records]
         copied[0]["smiles"]="CCO"
