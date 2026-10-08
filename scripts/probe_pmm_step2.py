@@ -42,7 +42,7 @@ def main():
             dump(page,"INITIAL")
             page.locator('input[type="file"]').first.set_input_files(
                 {"name":"probe_ethanol.sdf","mimeType":"chemical/x-mdl-sdfile","buffer":sdf})
-            page.locator('input[name*="mail" i], input[id*="mail" i], input[type="email"]').first.fill("research-probe@example.com")
+            page.locator('input[name*="mail" i], input[id*="mail" i], input[type="email"]').first.fill("pharmmapper-qa-check+oct2026@gmail.com")
             cont=page.get_by_role("button",name=re.compile("Continue",re.I))
             print("CONTINUE_COUNT",cont.count(),flush=True)
             cont.first.click(timeout=12000)
