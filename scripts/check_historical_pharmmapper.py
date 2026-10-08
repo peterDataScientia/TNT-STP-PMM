@@ -5,6 +5,7 @@ import io
 import json
 import sys
 import zipfile
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from providers.pharmmapper import collect_pharmmapper, JOB_IDS
 
 def main():
