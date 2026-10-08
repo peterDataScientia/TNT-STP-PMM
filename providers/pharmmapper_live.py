@@ -346,7 +346,7 @@ def _confirmed_job_id(page, urls, network_bodies=None, dialogs=None):
         try:
             body_text = document.locator("body").inner_text(timeout=5000)
             contextual = re.search(
-                r"(?:your\\s+)?job\\s*(?:id|number|identifier)\\s*[:#=\\-]?\\s*(\\d{12})",
+                r"(?:your\s+)?job\s*(?:id|number|identifier)\s*[:#=\-]?\s*(\d{12})",
                 body_text,
                 re.I,
             )
