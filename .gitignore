@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+*.db
+*.sqlite*
+runs/
+outputs/
+downloads/
+playwright-report/
+test-results/
