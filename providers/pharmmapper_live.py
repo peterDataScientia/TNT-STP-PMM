@@ -482,70 +482,108 @@ def _submit_one(page, record, email):
     final = _button(page, ["Submit", "Run", "OK"])
     if final is None:
         raise ValueError("Cannot find final Submit button")
-    network = []
-    network_bodies = []
-    response_evidence = []
+    # Store RESPONSE OBJECTS, not response.text() inside Playwright event handlers.
+    # Re-entering sync Playwright inside its own callback may throw an exception
+    # or discard the response without ever being inspected.
+    captured_responses = []
+    network_urls = []
     dialogs = []
-    def on_response(response):
-        try:
-            network.append(response.url)
-            # The response itself is captured after requestfinished below.
-            response_evidence.append({
-                "url": response.url.split("?", 1)[0],
-                "status": response.status,
-                "method": response.request.method,
-            })
-        except Exception:
-            pass
-    page.on("response", on_response)
-    def on_request_finished(request):
-        try:
-            response = request.response()
-            if not response:
-                return
-            ctype = response.headers.get("content-type", "").lower()
-            if any(x in ctype for x in ("json", "text", "html")):
-                body = response.text()
-                if body and len(body) <= 100_000:
-                    network_bodies.append(body)
-        except Exception:
-            pass
-    page.on("requestfinished", on_request_finished)
-    def on_dialog(dialog):
-        dialogs.append(dialog.message)
-        dialog.accept()
-    page.on("dialog", on_dialog)
-    # Point of no return: do not retry this compound if confirmation is missing.
+    page.on("response", lambda response: (
+        captured_responses.append(response), network_urls.append(response.url)))
+    page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+
+    # Point of no return: exactly one final click; never auto-retry.
     try:
         final.click(timeout=25000)
     except Exception as exc:
-        diagnostic = _submission_diagnostics(page, network, dialogs)
+        diagnostic = _submission_diagnostics(page, network_urls, dialogs)
+        diagnostic["click_error"] = f"{type(exc).__name__}: {exc}"[:250]
         raise SubmissionUnknown(
-            "Final Submit click outcome unknown; check job history before retry",
+            "Final Submit click outcome cannot be confirmed. No automatic retry.",
             diagnostic,
         ) from exc
-    deadline = time.monotonic() + 25
+
+    inspected = set()
+    response_bodies = []
+    response_evidence = []
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
-        job = _confirmed_job_id(page, network, network_bodies, dialogs)
+        # First check page navigation, new tabs and any visible confirmation.
+        job = _confirmed_job_id(page, network_urls, response_bodies, dialogs)
         if job:
             return job
-        # The previous implementation waited through auto-redirects and
-        # lost the ERROR text before it could be inspected.
-        for body in list(network_bodies) + [page.content()]:
-            rejection = _server_rejection(body)
-            if rejection:
-                diagnostic = _submission_diagnostics(page, network, dialogs)
-                diagnostic["responses"] = response_evidence[-12:]
-                raise SubmissionRejected(
-                    "PharmMapper server rejected Final Submit: " + rejection,
-                    diagnostic,
-                )
-        page.wait_for_timeout(500)
-    diagnostic = _submission_diagnostics(page, network, dialogs)
-    diagnostic["responses"] = response_evidence[-12:]
+
+        # Read network bodies on the NORMAL caller stack, after the callback.
+        # The server may return an ERROR page that redirects away in 5 seconds.
+        for response in list(captured_responses):
+            ident = id(response)
+            if ident in inspected:
+                continue
+            inspected.add(ident)
+            try:
+                evidence = {
+                    "url": response.url.split("?", 1)[0],
+                    "method": response.request.method,
+                    "status": response.status,
+                }
+                response_evidence.append(evidence)
+                ctype = response.headers.get("content-type", "").lower()
+                if not any(t in ctype for t in ("text", "html", "json", "javascript")):
+                    continue
+                body = response.text()
+                if body and len(body) <= 100_000:
+                    response_bodies.append(body)
+                    job = _confirmed_job_id(
+                        page, network_urls, [body], dialogs
+                    )
+                    if job:
+                        return job
+                    # Avoid false errors from third-party assets; inspect only
+                    # POST or PharmMapper's submitjob page.
+                    relevant = (
+                        response.request.method.upper() == "POST" or
+                        "/submitjob.html" in response.url
+                    )
+                    if relevant:
+                        rejected = _server_rejection(body)
+                        if rejected:
+                            diagnostic = _submission_diagnostics(
+                                page, network_urls, dialogs
+                            )
+                            diagnostic["responses"] = response_evidence[-15:]
+                            raise SubmissionRejected(
+                                "PharmMapper rejected Final Submit: " + rejected,
+                                diagnostic,
+                            )
+            except SubmissionRejected:
+                raise
+            except Exception as exc:
+                response_evidence.append({
+                    "read_error": type(exc).__name__,
+                    "message": str(exc)[:120],
+                })
+
+        try:
+            rejected = _server_rejection(page.content())
+        except Exception:
+            rejected = None
+        if rejected:
+            diagnostic = _submission_diagnostics(page, network_urls, dialogs)
+            diagnostic["responses"] = response_evidence[-15:]
+            raise SubmissionRejected(
+                "PharmMapper rejected Final Submit: " + rejected, diagnostic,
+            )
+        page.wait_for_timeout(350)
+
+    diagnostic = _submission_diagnostics(page, network_urls, dialogs)
+    diagnostic["responses"] = response_evidence[-15:]
+    diagnostic["note"] = (
+        "Final Submit clicked once. No server-confirmed job ID or explicit "
+        "server rejection was captured. Original attempt retained."
+    )
     raise SubmissionUnknown(
-        "Final Submit was clicked, but no confirmed job ID or explicit rejection was seen. "
-        "Do not resubmit until checking the PharmMapper job confirmation.",
+        "Final Submit outcome unconfirmed (30-second verification window). "
+        "Original attempt retained; never silently resubmit.",
         diagnostic,
     )
 
