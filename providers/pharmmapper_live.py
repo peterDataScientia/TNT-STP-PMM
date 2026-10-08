@@ -391,6 +391,47 @@ def _submission_diagnostics(page, network_urls, dialogs):
     }
 
 
+
+def _server_rejection(payload):
+    """Detect explicit PharmMapper error pages, not missing-job guesses."""
+    from bs4 import BeautifulSoup
+    try:
+        body = BeautifulSoup(str(payload), "html.parser").get_text(" ", strip=True)
+    except Exception:
+        body = str(payload)
+    body = re.sub(r"\s+", " ", body)
+    # PharmMapper documents/pages show a prominent ERROR heading and message.
+    markers = (
+        "email address is invalid", "invalid request detected",
+        "file type is invalid", "file format is invalid",
+        "please check your email", "error occurred when submitting",
+    )
+    low = body.lower()
+    explicit = any(marker in low for marker in markers)
+    server_error = (
+        re.search(r"\bERROR\b", body[:3500]) is not None
+        and re.search(
+            r"\b(invalid|failed|incorrect|cannot|please check|not accepted|not support|error)\b",
+            body[:3500], re.I,
+        ) is not None
+    )
+    if not explicit and not server_error:
+        return None
+    # Privacy: do not retain emails or original SDF / SMILES in diagnostics.
+    body = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[redacted-email]", body)
+    first_error = re.search(r"\bERROR\b", body)
+    if first_error:
+        body = body[first_error.start():]
+    return body[:500]
+
+
+class SubmissionRejected(RuntimeError):
+    """The remote provider explicitly rejected a POST response."""
+    def __init__(self, message, diagnostics=None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
+
+
 def _submit_one(page, record, email):
     cid = record["compound_id"]
     data = sdf_from_smiles(record["smiles"], cid)
@@ -422,6 +463,11 @@ def _submit_one(page, record, email):
         raise ValueError("Cannot find Step 1 Continue button")
     cont.click(timeout=20000)
     page.wait_for_timeout(700)
+    # Step 1 can return a server ERROR page which auto-redirects back
+    # after five seconds. Read it before it disappears.
+    rejection = _server_rejection(page.content())
+    if rejection:
+        raise ValueError("PharmMapper rejected Step 1: " + rejection)
     if not _human_only(page):
         raise ValueError("Human Protein Targets Only setting not found")
     # Reproduce the settings used for the successful A0–A16 project.
@@ -438,8 +484,20 @@ def _submit_one(page, record, email):
         raise ValueError("Cannot find final Submit button")
     network = []
     network_bodies = []
+    response_evidence = []
     dialogs = []
-    page.on("response", lambda response: network.append(response.url))
+    def on_response(response):
+        try:
+            network.append(response.url)
+            # The response itself is captured after requestfinished below.
+            response_evidence.append({
+                "url": response.url.split("?", 1)[0],
+                "status": response.status,
+                "method": response.request.method,
+            })
+        except Exception:
+            pass
+    page.on("response", on_response)
     def on_request_finished(request):
         try:
             response = request.response()
@@ -466,16 +524,28 @@ def _submit_one(page, record, email):
             "Final Submit click outcome unknown; check job history before retry",
             diagnostic,
         ) from exc
-    deadline = time.monotonic() + 35
+    deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
         job = _confirmed_job_id(page, network, network_bodies, dialogs)
         if job:
             return job
-        page.wait_for_timeout(750)
+        # The previous implementation waited through auto-redirects and
+        # lost the ERROR text before it could be inspected.
+        for body in list(network_bodies) + [page.content()]:
+            rejection = _server_rejection(body)
+            if rejection:
+                diagnostic = _submission_diagnostics(page, network, dialogs)
+                diagnostic["responses"] = response_evidence[-12:]
+                raise SubmissionRejected(
+                    "PharmMapper server rejected Final Submit: " + rejection,
+                    diagnostic,
+                )
+        page.wait_for_timeout(500)
     diagnostic = _submission_diagnostics(page, network, dialogs)
+    diagnostic["responses"] = response_evidence[-12:]
     raise SubmissionUnknown(
-        "Final Submit was clicked, but job ID could not be confirmed. "
-        "Do not resubmit; recover the job ID from PharmMapper's email or job history.",
+        "Final Submit was clicked, but no confirmed job ID or explicit rejection was seen. "
+        "Do not resubmit until checking the PharmMapper job confirmation.",
         diagnostic,
     )
 
@@ -514,6 +584,14 @@ def submit_pending(compounds, email, jobs=None, progress=None, on_checkpoint=Non
                         on_checkpoint(dict(jobs))
                     if progress:
                         progress(index, len(pending), cid, "SUBMITTED")
+                except SubmissionRejected as exc:
+                    jobs[cid] = {"job_id": "", "status": "REJECTED",
+                                 "error": str(exc), "diagnostics": exc.diagnostics}
+                    if on_checkpoint:
+                        on_checkpoint(dict(jobs))
+                    if progress:
+                        progress(index, len(pending), cid, "REJECTED")
+                    break
                 except SubmissionUnknown as exc:
                     jobs[cid] = {"job_id": "", "status": "SUBMISSION_UNKNOWN",
                                  "error": str(exc), "diagnostics": exc.diagnostics}
