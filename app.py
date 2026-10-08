@@ -68,6 +68,13 @@ def create_package(records, providers, digest):
 tab1, tab2, tab3 = st.tabs(["Prepare batch", "Import results", "About / status"])
 with tab1:
     st.subheader("1. Upload compounds")
+    st.download_button(
+        "⬇️ Download Example CSV",
+        data="compound_id,smiles\nexample_001,CCO\nexample_002,CC(=O)O\n",
+        file_name="TNT_STP_PMM_example_compounds.csv",
+        mime="text/csv",
+        help="Download an example with the required compound_id and smiles columns.",
+    )
     uploaded = st.file_uploader("CSV columns: compound_id, smiles; or .smi (SMILES ID)", type=["csv", "smi"])
     selected = st.multiselect("2. Select prediction platforms", PROVIDERS, default=list(PROVIDERS))
     if uploaded:
