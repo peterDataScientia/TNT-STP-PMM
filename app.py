@@ -152,7 +152,7 @@ with target_tab:
                 st.session_state["targetnet_output"] = (bundle, ok, failed)
             except Exception as exc:
                 st.error(f"TargetNet execution failed: {exc}")
-        show_result("TargetNet", "targetnet_output", "TargetNet_predictions.zip")
+    show_result("TargetNet", "targetnet_output", "TargetNet_predictions.zip")
 
 with pharm_tab:
     st.subheader("PharmMapper — New job submission and collection")
