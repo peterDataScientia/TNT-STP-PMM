@@ -16,7 +16,7 @@ class Locator:
         return self.attrs.get(key)
     def input_value(self):
         return self.attrs.get("value", "")
-    def inner_text(self):
+    def inner_text(self, timeout=None):
         return self.attrs.get("text", "")
     def text_content(self):
         return self.attrs.get("text", "")
@@ -24,12 +24,13 @@ class Locator:
 
 class FakePage:
     url = "https://www.lilab-ecust.cn/pharmmapper/submitfile.html"
-    def __init__(self, *, clips=None, inputs=None, targets=None, target_value=None, html=""):
+    def __init__(self, *, clips=None, inputs=None, targets=None, target_value=None, html="", body_text=""):
         self._clips = clips or []
         self._inputs = inputs or []
         self._targets = targets or []
         self._target_value = target_value
         self._html = html
+        self._body_text = body_text
         self.context = type("Context", (), {"pages": [self]})()
     def locator(self, selector):
         if selector == "a[href]":
@@ -42,6 +43,8 @@ class FakePage:
             return Locator(self._inputs)
         if selector == "#job-id":
             return Locator(attrs={"value": self._target_value or ""})
+        if selector == "body":
+            return Locator(attrs={"text": self._body_text})
         return Locator()
     def content(self):
         return self._html
@@ -66,6 +69,19 @@ class JobRecoveryTests(unittest.TestCase):
     def test_hidden_labelled_input(self):
         page = FakePage(inputs=[{"context": "job_id", "value": "261006081553"}])
         self.assertEqual(_confirmed_job_id(page, []), "261006081553")
+
+    def test_visible_job_id_confirmation(self):
+        page = FakePage(body_text="Successfully submitted. Your Job ID: 261006081553")
+        self.assertEqual(_confirmed_job_id(page, []), "261006081553")
+
+    def test_result_in_network_response(self):
+        page = FakePage()
+        self.assertEqual(
+            _confirmed_job_id(page, [], [
+                '{"message":"job submission succeeded","jobId":"261006081553"}'
+            ]),
+            "261006081553",
+        )
 
     def test_unrelated_timestamps_rejected(self):
         page = FakePage(html="<p>Server build time 261006081553</p>")
