@@ -190,7 +190,8 @@ with pharm_tab:
         if records and st.button("Submit pending PharmMapper jobs", type="primary",
                                  disabled=pending == 0 or active >= LIMIT):
             try:
-                jobs = submit_pending(records, email, jobs, progress_view())
+                jobs = submit_pending(records, email, jobs, progress_view(),
+                                      on_checkpoint=lambda snapshot: st.session_state.__setitem__("pmm_jobs", snapshot))
                 st.session_state["pmm_jobs"] = jobs
             except Exception as exc:
                 st.error(f"PharmMapper submission error: {exc}")
