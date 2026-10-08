@@ -1,4 +1,4 @@
-"""One-off live HTML/control probe. Does NOT click PharmMapper final Submit.
+"""One-off live HTML/control probe (second validation check). Does NOT click PharmMapper final Submit.
 Uses temporary model ethanol and non-deliverable example.com contact; NOT a real job.
 Run only through opt-in GitHub Actions diagnostic commit.
 """
