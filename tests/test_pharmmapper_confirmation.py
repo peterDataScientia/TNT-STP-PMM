@@ -1,7 +1,8 @@
 """Regressions for actual PharmMapper success page and COPY job ID."""
 import unittest
 from providers.pharmmapper_confirm import (
-    is_submission_confirmed, job_id_from_confirmation, job_id_from_live_page
+    is_submission_confirmed, job_id_from_confirmation, job_id_from_live_page,
+    job_id_from_copy_button
 )
 from providers.pharmmapper_live import SubmissionAcceptedWithoutId
 
@@ -18,6 +19,35 @@ class FakePage:
         self.snapshot = snapshot
     def evaluate(self, code):
         return self.snapshot
+
+
+class MockCopyControl:
+    def count(self):
+        return 1
+    @property
+    def first(self):
+        return self
+    def click(self, timeout=None):
+        pass
+
+
+class MockCopyContext:
+    def grant_permissions(self, *args, **kwargs):
+        pass
+
+
+class MockClipboardPage:
+    def __init__(self, value):
+        self.value = value
+        self.context = MockCopyContext()
+    def locator(self, selector):
+        return self
+    def inner_text(self, timeout=None):
+        return "Submit complete ! Your job has been submitted. Your JOB ID is : COPY"
+    def get_by_text(self, text, exact=False):
+        return MockCopyControl()
+    def evaluate(self, code):
+        return self.value
 
 
 class PharmMapperConfirmationTests(unittest.TestCase):
@@ -58,6 +88,17 @@ class PharmMapperConfirmationTests(unittest.TestCase):
         html = '<h2>ERROR</h2><input value="261008120512">'
         self.assertIsNone(job_id_from_confirmation(html))
         self.assertFalse(is_submission_confirmed(html))
+
+    def test_copy_clipboard_recovers_job_id(self):
+        self.assertEqual(
+            job_id_from_copy_button(MockClipboardPage("261008120512")),
+            "261008120512",
+        )
+
+    def test_invalid_clipboard_is_not_job_id(self):
+        self.assertIsNone(
+            job_id_from_copy_button(MockClipboardPage("NOT A JOB ID"))
+        )
 
     def test_live_js_value_requires_confirmation(self):
         page = FakePage({"success": False, "values": ["261008120512"],
