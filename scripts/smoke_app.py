@@ -1,8 +1,9 @@
 """Offline Streamlit startup smoke-test: no third-party submissions are made."""
+from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 def main():
-    app = AppTest.from_file("app.py", default_timeout=45).run()
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=45).run()
     if app.exception:
         raise AssertionError("Streamlit startup exceptions: " +
                              "; ".join(str(exc.message) for exc in app.exception))
