@@ -183,7 +183,8 @@ def _submit_one(page, record, email):
         raise RuntimeError("Cannot open PharmMapper submission page: " + str(last))
     filefield.set_input_files({"name": cid[:38] + ".sdf",
                                "mimeType": "chemical/x-mdl-sdfile", "buffer": data})
-    _email_field(page).fill(email)
+    if email:
+        _email_field(page).fill(email)
     cont = _button(page, ["Continue", "Next"])
     if cont is None:
         raise ValueError("Cannot find Step 1 Continue button")
@@ -229,11 +230,11 @@ def submit_pending(compounds, email, jobs=None, progress=None):
     active = sum(row.get("status") in ("SUBMITTED", "SUBMISSION_UNKNOWN")
                  for row in jobs.values())
     slots = max(0, LIMIT - active)
-    pending = [r for r in compounds if r["compound_id"] not in jobs][:slots]
+    pending = [r for r in compounds if r["compound_id"] not in jobs or jobs[r["compound_id"]].get("status") == "FAILED"][:slots]
     if not pending:
         return jobs
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email or ""):
-        raise ValueError("Valid email is required by PharmMapper")
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ValueError("Email address is invalid")
     with sync_playwright() as p:
         browser = _launch_browser(p)
         try:
