@@ -13,11 +13,12 @@ from providers.targetnet import run_targetnet
 from providers.targetnet_archive import collect_existing_targetnet
 from providers.pharmmapper import collect_pharmmapper, JOB_IDS
 from providers.pharmmapper_live import submit_pending, collect_jobs, LIMIT
+from providers.pharmmapper_confirm import is_submission_confirmed
 
 st.set_page_config(page_title="TNT–STP–PMM", page_icon="🧬", layout="wide")
 ROOT = Path(__file__).resolve().parent
 EXAMPLE = ROOT / "examples" / "compounds.csv"
-BUILD_ID = "pmm-response-capture-20261008"
+BUILD_ID = "pmm-confirmation-id-v2-20261008"
 
 
 def parse_csv(raw):
@@ -195,7 +196,7 @@ with pharm_tab:
             for cid, entry in recovered.items():
                 if cid not in {r["compound_id"] for r in records}:
                     raise ValueError("Unexpected compound ID")
-                if entry.get("status") not in ("SUBMITTED", "SUBMISSION_UNKNOWN", "COLLECTED", "FAILED", "REJECTED"):
+                if entry.get("status") not in ("SUBMITTED", "SUBMISSION_UNKNOWN", "ACCEPTED_ID_MISSING", "COLLECTED", "FAILED", "REJECTED"):
                     raise ValueError("Invalid status")
                 job = entry.get("job_id", "")
                 if job and not re.fullmatch(r"\d{12}", job):
@@ -206,7 +207,39 @@ with pharm_tab:
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             st.error(str(exc))
 
-    active = sum(j.get("status") in ("SUBMITTED", "SUBMISSION_UNKNOWN") for j in jobs.values())
+    # Upgrade old session checkpoints when the provider's saved response
+    # explicitly says 'Your job has been submitted'. This is NOT an inference
+    # from HTTP 200, elapsed time or a guessed Job ID.
+    migrated = []
+    for cid, item in jobs.items():
+        if item.get("status") == "SUBMISSION_UNKNOWN" and is_submission_confirmed(
+            (item.get("diagnostics") or {}).get("page_excerpt", "")
+        ):
+            item["status"] = "ACCEPTED_ID_MISSING"
+            item["error"] = (
+                "PharmMapper confirmed: Your job has been submitted. "
+                "Job ID near COPY has not yet been recovered."
+            )
+            migrated.append(cid)
+    if migrated:
+        st.session_state["pmm_jobs"] = dict(jobs)
+        st.success(
+            "Confirmed server acceptance for " + ", ".join(migrated) +
+            ". No additional submission was made."
+        )
+    accepted_missing = [
+        cid for cid, item in jobs.items()
+        if item.get("status") == "ACCEPTED_ID_MISSING"
+    ]
+    if accepted_missing:
+        st.success(
+            "Submission accepted by PharmMapper for " +
+            ", ".join(accepted_missing) +
+            ". Its Job ID still needs to be recovered before status collection."
+        )
+    active = sum(j.get("status") in
+                 ("SUBMITTED", "SUBMISSION_UNKNOWN", "ACCEPTED_ID_MISSING")
+                 for j in jobs.values())
     pending = sum(r["compound_id"] not in jobs or jobs[r["compound_id"]].get("status") == "FAILED" for r in records)
     if allow_submit:
         st.write(f"New-job queue: {pending} · Active/unknown: {active}/{LIMIT} · Recorded: {len(jobs)}")
@@ -222,6 +255,14 @@ with pharm_tab:
                 st.session_state["pmm_jobs"] = jobs
                 failed_now = [(cid, entry.get("error", "")) for cid, entry in jobs.items()
                               if entry.get("status") in ("FAILED", "REJECTED")]
+                accepted_now = [cid for cid, entry in jobs.items()
+                                if entry.get("status") == "ACCEPTED_ID_MISSING"]
+                if accepted_now:
+                    st.success(
+                        "PharmMapper confirmed submission for " +
+                        ", ".join(accepted_now) +
+                        ". Job ID near COPY was not readable; no duplicate submitted."
+                    )
                 unknown_now = [(cid, entry.get("error", "")) for cid, entry in jobs.items()
                                if entry.get("status") == "SUBMISSION_UNKNOWN"]
                 if failed_now:
@@ -255,11 +296,12 @@ with pharm_tab:
         # Recovery does not submit another job. Confirm IDs only from the
         # provider's job page or notification email; do not infer from time.
         unknown_ids = [cid for cid, row in jobs.items()
-                       if row.get("status") == "SUBMISSION_UNKNOWN"]
+                       if row.get("status") in ("SUBMISSION_UNKNOWN", "ACCEPTED_ID_MISSING")]
         if unknown_ids:
             st.warning(
-                "PharmMapper may already have accepted these jobs. "
-                "Do NOT resubmit. Check the confirmation email or Job Check page."
+                "For ACCEPTED_ID_MISSING, PharmMapper explicitly accepted the job, "
+                "but its ID still needs recovery. For SUBMISSION_UNKNOWN, "
+                "the server outcome remains unconfirmed. Do not resubmit."
             )
             st.markdown(
                 "[Open PharmMapper Check Job](https://www.lilab-ecust.cn/pharmmapper/check.html)"
@@ -315,6 +357,7 @@ with pharm_tab:
                         st.error("The job ID is already attached to another compound.")
                     else:
                         jobs[recover_cid]["job_id"] = recovered_id
+                        jobs[recover_cid]["status"] = "SUBMITTED"
                         jobs[recover_cid]["verification"] = "user_provided"
                         jobs[recover_cid]["error"] = (
                             "Recovered job ID entered manually; "
