@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 SITE = "https://www.swisstargetprediction.ch/index.php"
 HEADERS = ["compound_id", "smiles", "Target", "Common_name", "Uniprot_ID",
@@ -59,68 +59,134 @@ def _extract_all_rows(page):
     return rows
 
 def run_swiss(compounds, progress=None):
+    """Submit via the browser and report each stage, with bounded waiting.
+
+    The site may take around a minute per prediction. We never mark submission
+    or collection as successful until there is a confirmed result URL and rows.
+    """
     from playwright.sync_api import sync_playwright
+    import time
+
     if not compounds:
         raise ValueError("No compounds supplied")
+
     output = io.BytesIO()
     failures = {}
     collected = 0
     log = io.StringIO()
     manifest = csv.writer(log)
     manifest.writerow(["compound_id", "status", "job_id", "result_url", "row_count", "error"])
+    def report(done, cid, status):
+        if progress:
+            progress(done, len(compounds), cid, status)
+
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        with sync_playwright() as p:
-            browser = _launch_browser(p)
-            try:
-                context = browser.new_context(accept_downloads=True)
-                page = context.new_page()
-                page.set_default_timeout(45000)
-                for number, compound in enumerate(compounds, 1):
-                    cid, smiles = compound["compound_id"], compound["smiles"]
-                    if progress:
-                        progress(number-1, len(compounds), cid, "SUBMITTING")
-                    result_url = ""
-                    job_id = ""
-                    try:
-                        page.goto(SITE, wait_until="domcontentloaded", timeout=90000)
-                        human = page.locator('input[value="Homo_sapiens"]')
-                        if human.count():
-                            human.first.check()
-                        field = page.locator('input[name="smiles"], textarea[name="smiles"]').first
-                        field.fill(smiles)
-                        submit = page.get_by_role("button", name=re.compile("Predict targets", re.I))
-                        if submit.count() and submit.first.is_visible() and submit.first.is_enabled():
-                            submit.first.click()
-                        else:
-                            field.press("Enter")
-                        page.wait_for_url(re.compile(r"/result\.php\?job="), timeout=240000)
-                        result_url = page.url
-                        job_id = parse_qs(urlparse(result_url).query).get("job", [""])[0]
-                        if not job_id:
-                            raise RuntimeError("Result URL did not contain a job ID")
-                        page.locator("#resultTable tbody tr").first.wait_for(timeout=90000)
-                        rows = _extract_all_rows(page)
-                        table = io.StringIO()
-                        writer = csv.writer(table)
-                        writer.writerow(HEADERS)
-                        for values in rows:
-                            writer.writerow([cid, smiles, *values, job_id, result_url])
-                        archive.writestr(f"SwissTargetPrediction/{cid}.csv", table.getvalue())
-                        manifest.writerow([cid, "COLLECTED", job_id, result_url, len(rows), ""])
-                        collected += 1
-                        if progress:
-                            progress(number, len(compounds), cid, "COLLECTED")
-                    except Exception as exc:
-                        error = str(exc)
-                        failures[cid] = error
-                        archive.writestr(f"debug/{cid}_page.html", page.content()[:500000])
-                        manifest.writerow([cid, "FAILED", job_id, result_url, 0, error.replace("\n", " ")[:900]])
-                        if progress:
-                            progress(number, len(compounds), cid, "FAILED")
-                        # Stop immediately on a site/automation failure rather than
-                        # repeatedly submitting the other compounds into an unknown state.
-                        break
-            finally:
-                browser.close()
+        report(0, compounds[0]["compound_id"], "STARTING_BROWSER")
+        try:
+            with sync_playwright() as p:
+                browser = _launch_browser(p)
+                try:
+                    context = browser.new_context(accept_downloads=True)
+                    page = context.new_page()
+                    page.set_default_timeout(12000)
+                    for number, compound in enumerate(compounds, 1):
+                        cid = compound["compound_id"]
+                        smiles = compound["smiles"]
+                        job_id, result_url = "", ""
+                        started = time.monotonic()
+
+                        try:
+                            report(number - 1, cid, "OPENING_FORM")
+                            page.goto(SITE, wait_until="domcontentloaded", timeout=35000)
+
+                            report(number - 1, cid, "ENTERING_SMILES")
+                            field = page.locator(
+                                'input[name="smiles"], textarea[name="smiles"]'
+                            ).first
+                            field.wait_for(state="visible", timeout=12000)
+                            human = page.locator('input[value="Homo_sapiens"]')
+                            if human.count() and human.first.is_visible():
+                                human.first.check(timeout=12000)
+                            field.fill(smiles, timeout=12000)
+
+                            # This is the same submission action used by the
+                            # preserved legacy Playwright runner.
+                            report(number - 1, cid, "SENDING_FORM")
+                            field.press("Enter", timeout=12000)
+                            report(number - 1, cid, "WAITING_FOR_RESULT")
+
+                            deadline = time.monotonic() + 120
+                            last_url = page.url
+                            while time.monotonic() < deadline:
+                                last_url = page.url
+                                match = re.search(r"[?&]job=([0-9]+)", last_url)
+                                if ("/result.php" in last_url and match
+                                    and page.locator("#resultTable tbody tr").count()):
+                                    result_url = last_url
+                                    job_id = match.group(1)
+                                    break
+                                elapsed = int(time.monotonic() - started)
+                                report(number - 1, cid,
+                                       f"WAITING_FOR_RESULT ({elapsed}s; {urlparse(last_url).path})")
+                                page.wait_for_timeout(4000)
+
+                            if not result_url:
+                                raise TimeoutError(
+                                    "No complete result page after 120s; "
+                                    f"last browser URL: {last_url}"
+                                )
+
+                            report(number - 1, cid, "EXTRACTING_ALL_TARGETS")
+                            # Wait for DataTables to initialize before reading
+                            # its whole underlying dataset rather than page 1.
+                            page.wait_for_timeout(1500)
+                            rows = _extract_all_rows(page)
+                            result_csv = io.StringIO()
+                            writer = csv.writer(result_csv)
+                            writer.writerow(HEADERS)
+                            for values in rows:
+                                writer.writerow([cid, smiles, *values, job_id, result_url])
+                            archive.writestr(
+                                f"SwissTargetPrediction/{cid}.csv", result_csv.getvalue()
+                            )
+                            manifest.writerow(
+                                [cid, "COLLECTED", job_id, result_url, len(rows), ""]
+                            )
+                            collected += 1
+                            report(number, cid, f"COLLECTED ({len(rows)} targets)")
+                        except Exception as exc:
+                            error = f"{type(exc).__name__}: {exc}"
+                            failures[cid] = error
+                            try:
+                                archive.writestr(
+                                    f"debug/{cid}_page.html", page.content()[:350000]
+                                )
+                            except Exception:
+                                pass
+                            manifest.writerow(
+                                [cid, "FAILED", job_id, result_url, 0, error[:900]]
+                            )
+                            report(number, cid, "FAILED — see manifest and debug HTML")
+                            # Never submit remaining compounds when the first
+                            # submission's outcome is uncertain.
+                            for pending in compounds[number:]:
+                                manifest.writerow(
+                                    [pending["compound_id"], "NOT_ATTEMPTED",
+                                     "", "", 0, "Stopped after earlier failure"]
+                                )
+                            break
+                finally:
+                    browser.close()
+        except Exception as exc:
+            error = f"Browser initialization failed: {exc}"
+            failures.setdefault(compounds[0]["compound_id"], error)
+            report(0, compounds[0]["compound_id"], "BROWSER_START_FAILED")
+            for idx, compound in enumerate(compounds):
+                manifest.writerow([
+                    compound["compound_id"],
+                    "FAILED" if idx == 0 else "NOT_ATTEMPTED",
+                    "", "", 0, error if idx == 0 else "Browser failed to initialize"
+                ])
         archive.writestr("manifest.csv", log.getvalue())
+
     return output.getvalue(), collected, failures
