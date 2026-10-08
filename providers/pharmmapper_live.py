@@ -111,6 +111,90 @@ def _select_near(page, phrase, word):
     return False
 
 
+
+def configure_generate_conformers(page):
+    """Set Yes if the web form exposes a control; otherwise retain site default.
+
+    PharmMapper's official Help states Generate Conformers=TRUE by default.
+    The old _local_text search stopped at a small ancestor and often found
+    'Yes' rather than the 'Generate Conformers' group, causing false failures.
+    """
+    status = page.evaluate("""() => {
+      const tidy = x => String(x || '').replace(/\\s+/g, ' ').trim();
+      const options = new Set(['yes', 'true', '1', 'on']);
+      const headings = Array.from(document.querySelectorAll(
+        'label, th, td, span, strong, p, div'
+      )).filter(node =>
+        /^generate\\s+conformers\\s*:?$/i.test(tidy(node.textContent)) &&
+        !Array.from(node.children).some(ch =>
+          /^generate\\s+conformers\\s*:?$/i.test(tidy(ch.textContent))
+        )
+      );
+      if (!headings.length)
+        return 'GROUP_NOT_FOUND';
+
+      function labelOf(el) {
+        const explicit = el.labels ? Array.from(el.labels)
+          .map(x => tidy(x.textContent)).join(' ') : '';
+        return tidy([el.value, explicit,
+          el.closest('label')?.textContent || '',
+          el.getAttribute('aria-label') || ''
+        ].join(' ')).toLowerCase();
+      }
+      const group = headings[0];
+      let container = group;
+      for (let level=0; container && level<7; level++,
+           container=container.parentElement) {
+        const radios = Array.from(container.querySelectorAll(
+          'input[type="radio"], [role="radio"]'
+        ));
+        const yes = radios.filter(r =>
+          /(?:^|\\W)(?:yes|true)(?:$|\\W)/i.test(labelOf(r)) ||
+          options.has(tidy(r.value).toLowerCase())
+        );
+        if (yes.length && radios.length >= 2) {
+          const selected = yes[0];
+          if (!selected.checked && selected.getAttribute('aria-checked') !== 'true')
+            selected.click();
+          return selected.checked || selected.getAttribute('aria-checked') === 'true'
+            ? 'YES_CONFIRMED' : 'YES_CONTROL_FAILED';
+        }
+
+        const selects = Array.from(container.querySelectorAll('select'));
+        for (const select of selects) {
+          const yesOption = Array.from(select.options).find(opt =>
+            options.has(tidy(opt.value).toLowerCase()) ||
+            tidy(opt.textContent).toLowerCase() === 'yes'
+          );
+          if (!yesOption) continue;
+          if (select.value !== yesOption.value) {
+            select.value = yesOption.value;
+            select.dispatchEvent(new Event('input', {bubbles: true}));
+            select.dispatchEvent(new Event('change', {bubbles: true}));
+          }
+          return select.value === yesOption.value
+            ? 'YES_CONFIRMED' : 'YES_CONTROL_FAILED';
+        }
+
+        const checkboxes = Array.from(container.querySelectorAll(
+          'input[type="checkbox"]'
+        )).filter(x => /conform/i.test(labelOf(x) + ' ' +
+          tidy(x.name) + ' ' + tidy(x.id)));
+        if (checkboxes.length) {
+          if (!checkboxes[0].checked) checkboxes[0].click();
+          return checkboxes[0].checked ? 'YES_CONFIRMED' : 'YES_CONTROL_FAILED';
+        }
+      }
+      // A labeled Step 2 setting is visible but its yes/no widget is not a
+      // standard native input. PharmMapper's documented default is TRUE.
+      return 'DOCUMENTED_SITE_DEFAULT_TRUE';
+    }""")
+    if status in ("YES_CONFIRMED", "DOCUMENTED_SITE_DEFAULT_TRUE"):
+        return status
+    raise ValueError(f"Generate Conformers cannot be confirmed ({status})")
+
+
+
 def sdf_from_smiles(smiles, compound_id):
     """Prepare a 3D MDL SDF V2000 input for PharmMapper."""
     from rdkit import Chem
@@ -197,8 +281,9 @@ def _submit_one(page, record, email):
         raise ValueError("Cannot configure maximum conformations")
     if not _set_near(page, "Number of Reserved Matched Targets", 300):
         raise ValueError("Cannot configure matched targets")
-    if not _select_near(page, "Generate Conformers", "Yes"):
-        raise ValueError("Cannot set Generate Conformers to Yes")
+    # PharmMapper documentation specifies TRUE as the server default.
+    # Use actual form controls where available, not fragile neighboring text.
+    configure_generate_conformers(page)
     _select_near(page, "Perform GA Match", "No")
     final = _button(page, ["Submit", "Run", "OK"])
     if final is None:
