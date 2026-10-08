@@ -42,3 +42,26 @@ python -m unittest discover -s tests -v
 ## Scientific and operational safeguards
 
 Use public provider interfaces in accordance with terms and rate limits. No CAPTCHA bypass, credential collection, or speculative job completion claims. Retain original inputs and output provenance. Do not silently mix protein-level predictions with harmonized unique human gene symbols.
+
+
+## Streamlit application
+
+The Streamlit frontend is implemented in `app.py` (batch input inspection, provider selection, downloadable audit manifest ZIP, and read-only ZIP inspection).
+
+### Run locally
+
+```bash
+python -m pip install -r requirements.txt
+streamlit run app.py
+```
+
+### Deploy on Streamlit Community Cloud
+
+1. Open [share.streamlit.io](https://share.streamlit.io) and choose **Create app**.
+2. Select `peterDataScientia/TNT-STP-PMM`, branch `main`, and entrypoint `app.py`.
+3. Deploy and use the **Prepare batch** tab to produce an auditable manifest.
+4. Treat the disabled **Run predictions** control as intentional. A persistent worker plus audited provider adapters must be added before allowing live jobs.
+
+There is **no deployed URL until the app is created on Streamlit Community Cloud**. GitHub pushes alone do not create a Streamlit deployment.
+
+The interface does not upload compounds anywhere except to the Streamlit instance running it. A public Streamlit deployment should not be used for confidential chemical structures unless appropriate access controls are configured.
