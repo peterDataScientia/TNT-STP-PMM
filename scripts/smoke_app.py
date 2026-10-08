@@ -12,7 +12,22 @@ def main():
     for provider in ("SwissTargetPrediction", "TargetNet", "PharmMapper"):
         if not any(provider in heading for heading in headings):
             raise AssertionError(f"{provider} tab was not rendered")
-    print("Streamlit startup smoke test: PASS; tabs:", headings)
+    fast_button = next(
+        (button for button in app.button
+         if button.label == "Get 17 completed TargetNet results (FAST)"),
+        None,
+    )
+    if fast_button is None:
+        raise AssertionError("Fast TargetNet collection button missing")
+    fast_button.click().run()
+    if app.exception:
+        raise AssertionError("TargetNet FAST action crashed: " +
+                             "; ".join(str(exc.message) for exc in app.exception))
+    collected = [metric.value for metric in app.metric
+                 if metric.label == "Successfully collected"]
+    if "17" not in collected:
+        raise AssertionError(f"TargetNet FAST did not display 17/17: {collected}")
+    print("Streamlit FAST TargetNet button: PASS (17/17); tabs:", headings)
 
 if __name__ == "__main__":
     main()
