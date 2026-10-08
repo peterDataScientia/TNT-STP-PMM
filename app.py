@@ -234,8 +234,53 @@ with pharm_tab:
 
     jobs = st.session_state.get("pmm_jobs", {})
     if jobs:
-        st.dataframe([{"compound_id": cid, **details} for cid, details in jobs.items()],
-                     hide_index=True, use_container_width=True)
+        st.dataframe([
+            {"compound_id": cid,
+             "job_id": details.get("job_id", ""),
+             "status": details.get("status", ""),
+             "error": details.get("error", "")}
+            for cid, details in jobs.items()
+        ], hide_index=True, use_container_width=True)
+        # Recovery does not submit another job. Confirm IDs only from the
+        # provider's job page or notification email; do not infer from time.
+        unknown_ids = [cid for cid, row in jobs.items()
+                       if row.get("status") == "SUBMISSION_UNKNOWN"]
+        if unknown_ids:
+            st.warning(
+                "PharmMapper may already have accepted these jobs. "
+                "Do NOT resubmit. Check the confirmation email or Job Check page."
+            )
+            with st.expander("Recover previously submitted job (NO resubmission)",
+                             expanded=True):
+                recover_cid = st.selectbox("Compound with unknown submission",
+                                            unknown_ids, key="recover_cid")
+                recovered_id = st.text_input(
+                    "Job ID copied from PharmMapper (12 digits)",
+                    max_chars=12, key="recover_job_id"
+                )
+                if st.button("Attach recovered job ID without resubmitting"):
+                    from providers.pharmmapper_live import _valid_job
+                    if not _valid_job(recovered_id):
+                        st.error("Invalid 12-digit PharmMapper job ID.")
+                    elif any(r.get("job_id") == recovered_id
+                             for k, r in jobs.items() if k != recover_cid):
+                        st.error("The job ID is already attached to another compound.")
+                    else:
+                        jobs[recover_cid]["job_id"] = recovered_id
+                        jobs[recover_cid]["verification"] = "user_provided"
+                        jobs[recover_cid]["error"] = (
+                            "Recovered job ID entered manually; "
+                            "verify by collecting the actual server result."
+                        )
+                        st.session_state["pmm_jobs"] = dict(jobs)
+                        st.success(
+                            "Job ID attached. No new job submitted. "
+                            "Use Check and collect completed jobs."
+                        )
+            details = jobs.get(unknown_ids[0], {}).get("diagnostics")
+            if details:
+                with st.expander("Why job ID confirmation failed"):
+                    st.json(details)
         snapshot = json.dumps({"input_sha256": fingerprint, "jobs": jobs}, indent=2)
         st.download_button("Save PharmMapper job checkpoint", snapshot,
                            file_name="PharmMapper_jobs.json", mime="application/json")
