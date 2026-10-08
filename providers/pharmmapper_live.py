@@ -223,7 +223,7 @@ class SubmissionUnknown(RuntimeError):
     pass
 
 
-def submit_pending(compounds, email, jobs=None, progress=None):
+def submit_pending(compounds, email, jobs=None, progress=None, on_checkpoint=None):
     """Submit at most 10 potentially active jobs, including unknown submissions."""
     from playwright.sync_api import sync_playwright
     jobs = dict(jobs or {})
@@ -247,17 +247,23 @@ def submit_pending(compounds, email, jobs=None, progress=None):
                 try:
                     job = _submit_one(page, item, email)
                     jobs[cid] = {"job_id": job, "status": "SUBMITTED", "error": ""}
+                    if on_checkpoint:
+                        on_checkpoint(dict(jobs))
                     if progress:
                         progress(index, len(pending), cid, "SUBMITTED")
                 except SubmissionUnknown as exc:
                     jobs[cid] = {"job_id": "", "status": "SUBMISSION_UNKNOWN",
                                  "error": str(exc)}
+                    if on_checkpoint:
+                        on_checkpoint(dict(jobs))
                     if progress:
                         progress(index, len(pending), cid, "SUBMISSION_UNKNOWN")
                     break
                 except Exception as exc:
                     jobs[cid] = {"job_id": "", "status": "FAILED",
                                  "error": f"{type(exc).__name__}: {exc}"[:500]}
+                    if on_checkpoint:
+                        on_checkpoint(dict(jobs))
                     if progress:
                         progress(index, len(pending), cid, "FAILED")
                     break
