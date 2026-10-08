@@ -33,7 +33,7 @@ class SubmissionRegressionTests(unittest.TestCase):
 
     def test_ui_build_and_no_stale_banner(self):
         app = (Path(__file__).parents[1] / "app.py").read_text()
-        self.assertIn("pmm-response-capture-20261008", app)
+        self.assertIn("pmm-confirmation-id-v2-20261008", app)
         self.assertNotIn("final submission outcome UNKNOWN.", app)
         self.assertIn("historical_existing_job", app)
 
